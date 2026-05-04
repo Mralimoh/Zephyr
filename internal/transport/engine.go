@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -36,6 +35,8 @@ type Engine struct {
 
 	processed   map[string]bool
 	processedMu sync.Mutex
+
+	bootTime int64
 }
 
 func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
@@ -47,6 +48,7 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		processed:      make(map[string]bool),
 		pollTicker:  500 * time.Millisecond,
 		flushTicker: 300 * time.Millisecond,
+		bootTime:       time.Now().UnixNano(),
 	}
 	if isClient {
 		e.myDir = DirReq
@@ -133,7 +135,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
 			len(s.txBuf) >= FlushThresholdBytes || 
-			(len(s.txBuf) > 0 && time.Since(s.lastActivity) > 250*time.Millisecond)
+			(len(s.txBuf) > 0 && time.Since(s.lastActivity) > 100*time.Millisecond)
 
 		if !shouldSend {
 			s.mu.Unlock()
@@ -213,9 +215,11 @@ func (e *Engine) flushAll(ctx context.Context) {
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
-	currentPollInterval := e.pollTicker
-	maxPollInterval := 5 * time.Second
-	timer := time.NewTimer(currentPollInterval)
+	minInterval := e.pollTicker
+	maxInterval := 5 * time.Second
+	currentInterval := minInterval
+
+	timer := time.NewTimer(currentInterval)
 	defer timer.Stop()
 
 	for {
@@ -223,17 +227,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-		pollAgain:
-			if e.myDir == DirReq {
-				e.sessionMu.RLock()
-				count := len(e.sessions)
-				e.sessionMu.RUnlock()
-				if count == 0 {
-					timer.Reset(currentPollInterval)
-					continue
-				}
-			}
-
 			prefix := string(e.peerDir) + "-"
 			if e.myDir == DirReq {
 				prefix += e.id + "-mux-"
@@ -242,129 +235,124 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			files, err := e.backend.ListQuery(ctx, prefix)
 			if err != nil {
 				log.Printf("poll list error: %v", err)
-				timer.Reset(currentPollInterval)
+				timer.Reset(currentInterval)
 				continue
 			}
 
-			if len(files) == 0 {
-				if e.myDir == DirRes {
-					e.sessionMu.RLock()
-					activeSessions := len(e.sessions)
-					e.sessionMu.RUnlock()
-
-					if activeSessions == 0 {
-						currentPollInterval += 500 * time.Millisecond
-						if currentPollInterval > maxPollInterval {
-							currentPollInterval = maxPollInterval
-						}
-					} else {
-						currentPollInterval = e.pollTicker
-					}
-				}
-				timer.Reset(currentPollInterval)
-				continue
-			}
-
-			currentPollInterval = e.pollTicker
-
-			var wg sync.WaitGroup
-			for _, f := range files {
-				parts := strings.Split(f, "-")
-				if len(parts) >= 3 {
-					tsStr := parts[len(parts)-1]
-					tsStr = strings.TrimSuffix(tsStr, ".bin")
-					ts, _ := strconv.ParseInt(tsStr, 10, 64)
-					if ts > 0 && time.Since(time.Unix(0, ts)) > 5*time.Minute {
-						e.backend.Delete(ctx, f)
-						continue
-					}
-				}
-
-				e.processedMu.Lock()
-				already := e.processed[f]
-				if !already {
-					e.processed[f] = true
-				}
-				e.processedMu.Unlock()
-
-				if already {
-					continue
-				}
-
-				wg.Add(1)
-				go func(fname string) {
-					defer wg.Done()
-
-					e.sem <- struct{}{}
-					defer func() { <-e.sem }()
-
-					rc, err := e.backend.Download(ctx, fname)
-					if err != nil {
-						log.Printf("download error %s: %v", fname, err)
-						e.processedMu.Lock()
-						delete(e.processed, fname)
-						e.processedMu.Unlock()
-						return
-					}
-					defer rc.Close()
-
-					zr, err := zstd.NewReader(rc)
-					if err != nil {
-						log.Printf("zstd reader init error for %s: %v", fname, err)
-						return
-					}
-					defer zr.Close()
-
-					var fileClientID string
-					parts := strings.Split(fname, "-")
-					if len(parts) >= 4 && parts[2] == "mux" {
-						fileClientID = parts[1]
-					}
-
-					for {
-						var env Envelope
-						if err := env.Decode(zr); err != nil {
-							if err != io.EOF && err != io.ErrUnexpectedEOF {
-								log.Printf("mux decode error %s: %v", fname, err)
-							}
-							break
-						}
-
-						e.closedSessionsMu.Lock()
-						if _, exists := e.closedSessions[env.SessionID]; exists {
-							e.closedSessionsMu.Unlock()
+			foundNewData := false
+			if len(files) > 0 {
+				var wg sync.WaitGroup
+				for _, f := range files {
+					parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
+					if len(parts) >= 4 {
+						tsStr := parts[len(parts)-1]
+						fileTs, _ := strconv.ParseInt(tsStr, 10, 64)
+						if fileTs < e.bootTime {
 							continue
 						}
-						e.closedSessionsMu.Unlock()
-
-						e.sessionMu.Lock()
-						s, exists := e.sessions[env.SessionID]
-						if !exists && e.myDir == DirRes && e.OnNewSession != nil {
-							s = NewSession(env.SessionID)
-							s.ClientID = fileClientID
-							e.sessions[env.SessionID] = s
-							e.sessionMu.Unlock()
-							log.Printf("Engine: Triggering new session %s for Client %s", env.SessionID, fileClientID)
-							e.OnNewSession(env.SessionID, env.TargetAddr, s)
-						} else {
-							e.sessionMu.Unlock()
-						}
-
-						if s != nil {
-							s.ProcessRx(&env)
-						}
 					}
 
-					e.backend.Delete(ctx, fname)
-				}(f)
+					e.processedMu.Lock()
+					already := e.processed[f]
+					if !already {
+						e.processed[f] = true
+						foundNewData = true
+					}
+					e.processedMu.Unlock()
+
+					if !already {
+						wg.Add(1)
+						go func(fname string) {
+							defer wg.Done()
+							e.processFile(ctx, fname)
+						}(f)
+					}
+				}
+				wg.Wait()
 			}
 
-			wg.Wait()
+			if foundNewData {
+				currentInterval = minInterval
+				timer.Reset(50 * time.Millisecond)
+			} else {
+				e.sessionMu.RLock()
+				activeSessions := len(e.sessions)
+				e.sessionMu.RUnlock()
 
-			time.Sleep(100 * time.Millisecond)
-			goto pollAgain
+				if activeSessions > 0 {
+					currentInterval += 200 * time.Millisecond
+					if currentInterval > 1*time.Second {
+						currentInterval = 1 * time.Second
+					}
+				} else {
+					currentInterval += 500 * time.Millisecond
+					if currentInterval > maxInterval {
+						currentInterval = maxInterval
+					}
+				}
+				timer.Reset(currentInterval)
+			}
 		}
 	}
+}
+
+func (e *Engine) processFile(ctx context.Context, fname string) {
+	e.sem <- struct{}{}
+	defer func() { <-e.sem }()
+
+	rc, err := e.backend.Download(ctx, fname)
+	if err != nil {
+		log.Printf("download error %s: %v", fname, err)
+		e.processedMu.Lock()
+		delete(e.processed, fname)
+		e.processedMu.Unlock()
+		return
+	}
+	defer rc.Close()
+
+	zr, err := zstd.NewReader(rc)
+	if err != nil {
+		log.Printf("zstd reader error %s: %v", fname, err)
+		return
+	}
+	defer zr.Close()
+
+	var fileClientID string
+	parts := strings.Split(fname, "-")
+	if len(parts) >= 4 && parts[2] == "mux" {
+		fileClientID = parts[1]
+	}
+
+	for {
+		var env Envelope
+		if err := env.Decode(zr); err != nil {
+			break
+		}
+
+		e.closedSessionsMu.Lock()
+		_, isClosed := e.closedSessions[env.SessionID]
+		e.closedSessionsMu.Unlock()
+		if isClosed {
+			continue
+		}
+
+		e.sessionMu.Lock()
+		s, exists := e.sessions[env.SessionID]
+		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
+			s = NewSession(env.SessionID)
+			s.ClientID = fileClientID
+			e.sessions[env.SessionID] = s
+			e.sessionMu.Unlock()
+			e.OnNewSession(env.SessionID, env.TargetAddr, s)
+		} else {
+			e.sessionMu.Unlock()
+		}
+
+		if s != nil {
+			s.ProcessRx(&env)
+		}
+	}
+	e.backend.Delete(ctx, fname)
 }
 
 func (e *Engine) RemoveSession(id string) {
