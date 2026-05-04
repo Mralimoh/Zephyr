@@ -1,0 +1,151 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"Zephyr/internal/config"
+	"Zephyr/internal/httpclient"
+	"Zephyr/internal/storage"
+	"Zephyr/internal/transport"
+	"github.com/things-go/go-socks5"
+	"github.com/things-go/go-socks5/statute"
+)
+
+func generateSessionID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+type rawResolver struct{}
+
+func (rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	return ctx, nil, nil
+}
+
+func main() {
+	var configPath, gcPath string
+	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
+	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
+	flag.Parse()
+
+	log.Println("Starting Flow Client...")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	appCfg, err := config.Load(configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	var backend storage.Backend
+	if appCfg.StorageType == "google" {
+		customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
+		backend = storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)
+	} else {
+		backend, err = storage.NewLocalBackend(appCfg.LocalDir)
+		if err != nil {
+			log.Fatalf("Failed to init local storage: %v", err)
+		}
+	}
+	if err := backend.Login(ctx); err != nil {
+		log.Fatalf("Backend login failed: %v", err)
+	}
+
+	if appCfg.StorageType == "google" && appCfg.GoogleFolderID == "" {
+		log.Println("Zero-Config: Searching for existing Google Drive folder 'Flow-Data'...")
+		folderID, err := backend.FindFolder(ctx, "Flow-Data")
+		if err != nil {
+			log.Fatalf("Failed to search for folder: %v", err)
+		}
+
+		if folderID == "" {
+			log.Println("Zero-Config: 'Flow-Data' not found. Creating new folder...")
+			folderID, err = backend.CreateFolder(ctx, "Flow-Data")
+			if err != nil {
+				log.Fatalf("Failed to auto-create folder: %v", err)
+			}
+		} else {
+			log.Printf("Zero-Config: Found existing folder with ID %s", folderID)
+		}
+
+		appCfg.GoogleFolderID = folderID
+		if err := appCfg.Save(configPath); err != nil {
+			log.Printf("Warning: Failed to save folder ID to %s: %v", configPath, err)
+		} else {
+			log.Printf("Zero-Config: Config updated with folder ID %s", folderID)
+		}
+	}
+
+	cid := appCfg.ClientID
+	if cid == "" {
+		cid = generateSessionID()[:8]
+	}
+	engine := transport.NewEngine(backend, true, cid)
+	if appCfg.RefreshRateMs > 0 {
+		engine.SetPollRate(appCfg.RefreshRateMs)
+	}
+	if appCfg.FlushRateMs > 0 {
+		engine.SetFlushRate(appCfg.FlushRateMs)
+	}
+	engine.Start(ctx)
+
+	listenAddr := appCfg.ListenAddr
+	if listenAddr == "" {
+		listenAddr = "127.0.0.1:1080"
+	}
+
+	server := socks5.NewServer(
+		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
+			sessionID := generateSessionID()
+
+			host, port, err := net.SplitHostPort(addr)
+			if err == nil {
+				if net.ParseIP(host) != nil {
+					log.Printf("New covert session %s targeting RAW IP %s:%s (Warning: Local DNS Leak?)", sessionID, host, port)
+				} else {
+					log.Printf("New covert session %s targeting SECURE DOMAIN %s:%s", sessionID, host, port)
+				}
+			} else {
+				log.Printf("New covert session %s targeting %s", sessionID, addr)
+			}
+
+			session := transport.NewSession(sessionID)
+			session.TargetAddr = addr
+			engine.AddSession(session)
+
+			session.EnqueueTx(nil)
+
+			return transport.NewVirtualConn(session, engine), nil
+		}),
+		socks5.WithAssociateHandle(func(ctx context.Context, w io.Writer, req *socks5.Request) error {
+			socks5.SendReply(w, statute.RepCommandNotSupported, nil)
+			return fmt.Errorf("covert UDP not supported")
+		}),
+		socks5.WithResolver(rawResolver{}),
+	)
+
+	log.Printf("Listening for SOCKS5 on %s...", listenAddr)
+
+	go func() {
+		if err := server.ListenAndServe("tcp", listenAddr); err != nil {
+			log.Fatalf("SOCKS5 server failed: %v", err)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Println("Shutting down client...")
+	cancel()
+}
