@@ -213,31 +213,30 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		return err
 	}
 
-	pr, pw := io.Pipe()
-	metaWriter := multipart.NewWriter(pw)
+	var buf bytes.Buffer
+	metaWriter := multipart.NewWriter(&buf)
 
-	go func() {
-		defer pw.Close()
-		defer metaWriter.Close()
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Type", "application/json; charset=UTF-8")
+	part1, _ := metaWriter.CreatePart(h)
+	meta := map[string]interface{}{
+		"name": filename,
+	}
+	if b.folderID != "" {
+		meta["parents"] = []string{b.folderID}
+	}
+	json.NewEncoder(part1).Encode(meta)
 
-		h := make(textproto.MIMEHeader)
-		h.Set("Content-Type", "application/json; charset=UTF-8")
-		part1, _ := metaWriter.CreatePart(h)
-		meta := map[string]interface{}{
-			"name": filename,
-		}
-		if b.folderID != "" {
-			meta["parents"] = []string{b.folderID}
-		}
-		json.NewEncoder(part1).Encode(meta)
+	h = make(textproto.MIMEHeader)
+	h.Set("Content-Type", "application/octet-stream")
+	part2, _ := metaWriter.CreatePart(h)
+	if _, err := io.Copy(part2, data); err != nil {
+		return fmt.Errorf("failed to copy data to buffer: %w", err)
+	}
 
-		h = make(textproto.MIMEHeader)
-		h.Set("Content-Type", "application/octet-stream")
-		part2, _ := metaWriter.CreatePart(h)
-		io.Copy(part2, data)
-	}()
+	metaWriter.Close()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", pr)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", &buf)
 	if err != nil {
 		return err
 	}
