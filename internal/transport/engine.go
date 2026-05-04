@@ -378,7 +378,7 @@ func (e *Engine) RemoveSession(id string) {
 }
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -386,42 +386,41 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			e.processedMu.Lock()
+			if len(e.processed) > 2000 {
+				e.processed = make(map[string]bool)
+			}
+			e.processedMu.Unlock()
+
 			e.closedSessionsMu.Lock()
 			for id, t := range e.closedSessions {
-				if time.Since(t) > 30*time.Second {
+				if time.Since(t) > 1*time.Minute {
 					delete(e.closedSessions, id)
 				}
 			}
 			e.closedSessionsMu.Unlock()
 
-			e.processedMu.Lock()
-			if len(e.processed) > 5000 {
-				e.processed = make(map[string]bool)
-			}
-			e.processedMu.Unlock()
-
-			if e.myDir == DirReq {
-				e.sessionMu.RLock()
-				count := len(e.sessions)
-				e.sessionMu.RUnlock()
-				if count == 0 {
+			prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+			for _, pref := range prefixes {
+				files, err := e.backend.ListQuery(ctx, pref)
+				if err != nil {
 					continue
 				}
-			}
 
-			files, _ := e.backend.ListQuery(ctx, string(e.myDir)+"-")
-			for _, f := range files {
-				parts := strings.Split(f, "-")
-				if len(parts) >= 3 {
-					tsStr := parts[len(parts)-1]
-					tsStr = strings.TrimSuffix(tsStr, ".json")
-					tsStr = strings.TrimSuffix(tsStr, ".bin")
-					ts, err := strconv.ParseInt(tsStr, 10, 64)
-					if err == nil {
-						t := time.Unix(0, ts)
-						if time.Since(t) > 10*time.Second {
-							e.backend.Delete(ctx, f)
-						}
+				for _, f := range files {
+					parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
+					if len(parts) < 4 {
+						continue 
+					}
+
+					nanoStr := parts[len(parts)-1]
+					nanos, err := strconv.ParseInt(nanoStr, 10, 64)
+					if err != nil {
+						continue
+					}
+
+					if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
+						e.backend.Delete(ctx, f)
 					}
 				}
 			}

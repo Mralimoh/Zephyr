@@ -357,7 +357,7 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 	b.fileIdsMu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("file-id mapping not found for %s", filename)
+		return nil 
 	}
 
 	tok, err := b.getValidToken(ctx)
@@ -377,7 +377,7 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete returned %d: %s", resp.StatusCode, string(body))
 	}
