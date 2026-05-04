@@ -95,7 +95,8 @@ func main() {
 func handleServerConn(sessionID, targetAddr string, session *transport.Session, engine *transport.Engine) {
 	defer engine.RemoveSession(sessionID)
 
-	conn, err := net.Dial("tcp", targetAddr)
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(session.Ctx, "tcp", targetAddr)
 	if err != nil {
 		log.Printf("Dial error to %s: %v", targetAddr, err)
 		return
@@ -105,7 +106,7 @@ func handleServerConn(sessionID, targetAddr string, session *transport.Session, 
 	errCh := make(chan error, 2)
 
 	go func() {
-		buf := make([]byte, 4096)
+		buf := make([]byte, 32*1024)
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
@@ -120,19 +121,27 @@ func handleServerConn(sessionID, targetAddr string, session *transport.Session, 
 
 	go func() {
 		for {
-			data, ok := <-session.RxChan
-			if !ok {
-				errCh <- fmt.Errorf("session closed by remote")
+			select {
+			case <-session.Ctx.Done():
+				errCh <- fmt.Errorf("session cancelled")
 				return
-			}
-			if len(data) > 0 {
-				if _, err := conn.Write(data); err != nil {
-					errCh <- err
+			case data, ok := <-session.RxChan:
+				if !ok {
+					errCh <- fmt.Errorf("session closed by remote")
 					return
+				}
+				if len(data) > 0 {
+					if _, err := conn.Write(data); err != nil {
+						errCh <- err
+						return
+					}
 				}
 			}
 		}
 	}()
 
-	<-errCh
+	select {
+	case <-errCh:
+	case <-session.Ctx.Done():
+	}
 }
