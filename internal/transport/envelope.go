@@ -16,14 +16,30 @@ type Envelope struct {
 
 const (
 	MagicByte = 0x1F
+	MaxSessionIDLen = 64
+	MaxAddrLen      = 255
+	MaxPayloadLen   = 5 * 1024 * 1024
 )
 
 func (e *Envelope) Encode(w io.Writer) error {
-	var hdr [512]byte
+	if len(e.SessionID) > MaxSessionIDLen {
+		return fmt.Errorf("session ID too long: %d", len(e.SessionID))
+	}
+	if len(e.TargetAddr) > MaxAddrLen {
+		return fmt.Errorf("target address too long: %d", len(e.TargetAddr))
+	}
+	if len(e.Payload) > MaxPayloadLen {
+		return fmt.Errorf("payload too large: %d", len(e.Payload))
+	}
+
+	headerSize := 1 + 1 + len(e.SessionID) + 8 + 1 + len(e.TargetAddr) + 1 + 4
+	hdr := make([]byte, headerSize)
+	
 	hdr[0] = MagicByte
 	hdr[1] = uint8(len(e.SessionID))
-	copy(hdr[2:], e.SessionID)
-	offset := 2 + len(e.SessionID)
+	offset := 2
+	copy(hdr[offset:], e.SessionID)
+	offset += len(e.SessionID)
 
 	binary.BigEndian.PutUint64(hdr[offset:], e.Seq)
 	offset += 8
@@ -41,9 +57,8 @@ func (e *Envelope) Encode(w io.Writer) error {
 	offset++
 
 	binary.BigEndian.PutUint32(hdr[offset:], uint32(len(e.Payload)))
-	offset += 4
-
-	if _, err := w.Write(hdr[:offset]); err != nil {
+	
+	if _, err := w.Write(hdr); err != nil {
 		return err
 	}
 	if len(e.Payload) > 0 {
@@ -54,14 +69,19 @@ func (e *Envelope) Encode(w io.Writer) error {
 }
 
 func (e *Envelope) Decode(r io.Reader) error {
-	var hdr [2]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+	var prefix [2]byte
+	if _, err := io.ReadFull(r, prefix[:]); err != nil {
 		return err
 	}
-	if hdr[0] != MagicByte {
-		return fmt.Errorf("invalid magic byte: 0x%X", hdr[0])
+	if prefix[0] != MagicByte {
+		return fmt.Errorf("invalid magic byte: 0x%X", prefix[0])
 	}
-	sidLen := int(hdr[1])
+
+	sidLen := int(prefix[1])
+	if sidLen > MaxSessionIDLen {
+		return fmt.Errorf("malicious session ID length: %d", sidLen)
+	}
+
 	sidBuf := make([]byte, sidLen)
 	if _, err := io.ReadFull(r, sidBuf); err != nil {
 		return err
@@ -79,24 +99,26 @@ func (e *Envelope) Decode(r io.Reader) error {
 		return err
 	}
 	addrLen := int(addrLenBuf[0])
-	addrBuf := make([]byte, addrLen)
-	if _, err := io.ReadFull(r, addrBuf); err != nil {
-		return err
+	if addrLen > MaxAddrLen {
+		return fmt.Errorf("malicious address length: %d", addrLen)
 	}
-	e.TargetAddr = string(addrBuf)
+	
+	if addrLen > 0 {
+		addrBuf := make([]byte, addrLen)
+		if _, err := io.ReadFull(r, addrBuf); err != nil {
+			return err
+		}
+		e.TargetAddr = string(addrBuf)
+	}
 
-	var closeBuf [1]byte
-	if _, err := io.ReadFull(r, closeBuf[:]); err != nil {
+	var footer [5]byte
+	if _, err := io.ReadFull(r, footer[:]); err != nil {
 		return err
 	}
-	e.Close = closeBuf[0] == 1
+	e.Close = footer[0] == 1
+	payLen := binary.BigEndian.Uint32(footer[1:])
 
-	var payLenBuf [4]byte
-	if _, err := io.ReadFull(r, payLenBuf[:]); err != nil {
-		return err
-	}
-	payLen := binary.BigEndian.Uint32(payLenBuf[:])
-	if payLen > 10*1024*1024 {
+	if payLen > MaxPayloadLen {
 		return fmt.Errorf("packet too large: %d", payLen)
 	}
 
