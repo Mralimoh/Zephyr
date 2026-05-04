@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bytes"
 
 	"Zephyr/internal/storage"
 	"github.com/klauspost/compress/zstd"
@@ -176,20 +177,32 @@ func (e *Engine) flushAll(ctx context.Context) {
 			e.sem <- struct{}{}
 			defer func() { <-e.sem }()
 
-			pr, pw := io.Pipe()
-			go func() {
-				zw, _ := zstd.NewWriter(pw, zstd.WithEncoderLevel(zstd.SpeedFastest))
-				for _, env := range m {
-					if err := env.Encode(zw); err != nil {
-						break
-					}
+			var buf bytes.Buffer
+			zw, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedFastest))
+			if err != nil {
+				log.Printf("zstd writer error: %v", err)
+				return
+			}
+			
+			for _, env := range m {
+				if err := env.Encode(zw); err != nil {
+					break
 				}
-				zw.Close()
-				pw.Close()
-			}()
+			}
+			zw.Close()
 
-			if err := e.backend.Upload(ctx, fname, pr); err != nil {
-				log.Printf("upload error %s: %v", fname, err)
+			payload := buf.Bytes()
+			maxRetries := 3
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				err := e.backend.Upload(ctx, fname, bytes.NewReader(payload))
+				if err == nil {
+					return
+				}
+				
+				log.Printf("upload retry %d/%d for %s: %v", attempt, maxRetries, fname, err)
+				if attempt < maxRetries {
+					time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+				}
 			}
 		}(filename, mux)
 	}
