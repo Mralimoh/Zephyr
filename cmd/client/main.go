@@ -39,7 +39,7 @@ func main() {
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
 	flag.Parse()
 
-	log.Println("Starting Flow Client...")
+log.Println("Starting Zephyr Client...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -63,15 +63,15 @@ func main() {
 	}
 
 	if appCfg.StorageType == "google" && appCfg.GoogleFolderID == "" {
-		log.Println("Zero-Config: Searching for existing Google Drive folder 'Flow-Data'...")
-		folderID, err := backend.FindFolder(ctx, "Flow-Data")
+		log.Println("Zero-Config: Searching for existing Google Drive folder 'Zephyr-Data'...")
+		folderID, err := backend.FindFolder(ctx, "Zephyr-Data")
 		if err != nil {
 			log.Fatalf("Failed to search for folder: %v", err)
 		}
 
 		if folderID == "" {
-			log.Println("Zero-Config: 'Flow-Data' not found. Creating new folder...")
-			folderID, err = backend.CreateFolder(ctx, "Flow-Data")
+			log.Println("Zero-Config: 'Zephyr-Data' not found. Creating new folder...")
+			folderID, err = backend.CreateFolder(ctx, "Zephyr-Data")
 			if err != nil {
 				log.Fatalf("Failed to auto-create folder: %v", err)
 			}
