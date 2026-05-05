@@ -29,12 +29,6 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-type rawResolver struct{}
-
-func (rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
-	return ctx, nil, nil
-}
-
 func main() {
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
