@@ -170,10 +170,10 @@ func (e *Engine) flushAll(ctx context.Context) {
 			bufferAge = time.Since(s.txBufAge)
 		}
 
-		shouldSend := s.closed || 
-			(s.txSeq == 0 && e.myDir == DirReq) || 
-			len(s.txBuf) >= FlushThresholdBytes || 
-			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker) || 
+		shouldSend := s.closed ||
+			(s.txSeq == 0 && e.myDir == DirReq) ||
+			len(s.txBuf) >= FlushThresholdBytes ||
+			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker) ||
 			(len(s.txBuf) > 0 && time.Since(s.lastActivity) > 100*time.Millisecond)
 
 		if !shouldSend {
@@ -182,29 +182,35 @@ func (e *Engine) flushAll(ctx context.Context) {
 		}
 
 		payload := s.txBuf
+		seq := s.txSeq
+		isClosed := s.closed
+		targetAddr := s.TargetAddr
+		clientID := s.ClientID
+
 		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
-		s.txCond.Broadcast()
-
-		env := Envelope{
-			SessionID:  s.ID,
-			Seq:        s.txSeq,
-			Payload:    payload,
-			Close:      s.closed,
-			TargetAddr: s.TargetAddr,
-		}
-
 		s.txSeq++
-		if s.closed {
+		s.txCond.Broadcast()
+		
+		s.mu.Unlock()
+
+		if isClosed {
 			closedSessionIDs = append(closedSessionIDs, s.ID)
 		}
 
-		cid := s.ClientID
+		cid := clientID
 		if cid == "" && e.myDir == DirReq {
 			cid = e.id
 		}
 
+		env := Envelope{
+			SessionID:  s.ID,
+			Seq:        seq,
+			Payload:    payload,
+			Close:      isClosed,
+			TargetAddr: targetAddr,
+		}
+
 		muxes[cid] = append(muxes[cid], env)
-		s.mu.Unlock()
 	}
 
 	for cid, mux := range muxes {
@@ -226,7 +232,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 			if err != nil {
 				return
 			}
-			
+
 			for _, env := range m {
 				if err := env.Encode(zw); err != nil {
 					break
@@ -235,7 +241,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 			zw.Close()
 
 			payloadReader := bytes.NewReader(buf.Bytes())
-			
+
 			maxRetries := 3
 			for attempt := 1; attempt <= maxRetries; attempt++ {
 				payloadReader.Seek(0, 0)
@@ -244,7 +250,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 					e.lastTxTime = time.Now()
 					return
 				}
-				
+
 				if attempt < maxRetries {
 					select {
 					case <-ctx.Done():
@@ -282,25 +288,29 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 			foundNewData := false
 			if len(files) > 0 {
-				var wg sync.WaitGroup
+				var newFiles []string
+
+				e.processedMu.Lock()
 				for _, f := range files {
-					e.processedMu.Lock()
-					already := e.processed[f]
-					if !already {
+					if !e.processed[f] {
 						e.processed[f] = true
+						newFiles = append(newFiles, f)
 						foundNewData = true
 					}
-					e.processedMu.Unlock()
+				}
+				e.processedMu.Unlock()
 
-					if !already {
+				if len(newFiles) > 0 {
+					var wg sync.WaitGroup
+					for _, f := range newFiles {
 						wg.Add(1)
 						go func(fname string) {
 							defer wg.Done()
 							e.processFile(ctx, fname)
 						}(f)
 					}
+					wg.Wait()
 				}
-				wg.Wait()
 			}
 
 			e.sessionMu.RLock()
@@ -405,8 +415,13 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 func (e *Engine) RemoveSession(id string) {
 	e.sessionMu.Lock()
+	s, exists := e.sessions[id]
 	delete(e.sessions, id)
 	e.sessionMu.Unlock()
+
+	if exists && s != nil {
+		s.cancel()
+	}
 
 	e.closedSessionsMu.Lock()
 	e.closedSessions[id] = time.Now()

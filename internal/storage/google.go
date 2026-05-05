@@ -262,7 +262,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 		return nil, err
 	}
 
-	q := fmt.Sprintf("name contains '%s'", prefix)
+	q := fmt.Sprintf("name contains '%s' and trashed = false", prefix)
 	if b.folderID != "" {
 		q += fmt.Sprintf(" and '%s' in parents", b.folderID)
 	}
@@ -270,6 +270,8 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	u, _ := url.Parse("https://www.googleapis.com/drive/v3/files")
 	v := u.Query()
 	v.Set("q", q)
+	v.Set("spaces", "drive")
+	v.Set("orderBy", "createdTime asc")
 	v.Set("fields", "files(id, name)")
 	u.RawQuery = v.Encode()
 
@@ -291,7 +293,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	}
 
 	var resData struct {
-		Files []struct {
+		Files[]struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"files"`
@@ -305,7 +307,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 		b.fileIDs = make(map[string]string)
 	}
 
-	var names []string
+	var names[]string
 	for _, f := range resData.Files {
 		if strings.HasPrefix(f.Name, prefix) {
 			b.fileIDs[f.Name] = f.ID
