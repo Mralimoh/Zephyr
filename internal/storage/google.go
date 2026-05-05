@@ -213,35 +213,36 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		return err
 	}
 
-	var buf bytes.Buffer
-	metaWriter := multipart.NewWriter(&buf)
-
-	h := make(textproto.MIMEHeader)
-	h.Set("Content-Type", "application/json; charset=UTF-8")
-	part1, _ := metaWriter.CreatePart(h)
-	meta := map[string]interface{}{
-		"name": filename,
-	}
+	meta := map[string]interface{}{"name": filename}
 	if b.folderID != "" {
 		meta["parents"] = []string{b.folderID}
 	}
-	json.NewEncoder(part1).Encode(meta)
+	metaBytes, _ := json.Marshal(meta)
 
-	h = make(textproto.MIMEHeader)
-	h.Set("Content-Type", "application/octet-stream")
-	part2, _ := metaWriter.CreatePart(h)
-	if _, err := io.Copy(part2, data); err != nil {
-		return fmt.Errorf("failed to copy data to buffer: %w", err)
-	}
+	bodyReader, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
 
-	metaWriter.Close()
+	go func() {
+		defer pw.Close()
+		defer mw.Close()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", &buf)
+		h := make(textproto.MIMEHeader)
+		h.Set("Content-Type", "application/json; charset=UTF-8")
+		part1, _ := mw.CreatePart(h)
+		part1.Write(metaBytes)
+
+		h = make(textproto.MIMEHeader)
+		h.Set("Content-Type", "application/octet-stream")
+		part2, _ := mw.CreatePart(h)
+		io.Copy(part2, data)
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", bodyReader)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", metaWriter.FormDataContentType())
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
@@ -249,11 +250,12 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload returned %d: %s", resp.StatusCode, string(body))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
 	}
-	return nil
+	
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("upload returned %d: %s", resp.StatusCode, string(body))
 }
 
 func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string, error) {
@@ -367,7 +369,8 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "DELETE", "https://www.googleapis.com/drive/v3/files/"+fileID, nil)
+	u := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", fileID)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", u, nil)
 	if err != nil {
 		return err
 	}
@@ -379,7 +382,7 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete returned %d: %s", resp.StatusCode, string(body))
 	}
@@ -392,6 +395,11 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 }
 
 func (b *GoogleBackend) CreateFolder(ctx context.Context, name string) (string, error) {
+	existingID, err := b.FindFolder(ctx, name)
+	if err == nil && existingID != "" {
+		return existingID, nil
+	}
+
 	tok, err := b.getValidToken(ctx)
 	if err != nil {
 		return "", err
@@ -401,9 +409,13 @@ func (b *GoogleBackend) CreateFolder(ctx context.Context, name string) (string, 
 		"name":     name,
 		"mimeType": "application/vnd.google-apps.folder",
 	}
+	if b.folderID != "" {
+		meta["parents"] = []string{b.folderID}
+	}
 	body, _ := json.Marshal(meta)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/drive/v3/files", bytes.NewReader(body))
+	u := "https://www.googleapis.com/drive/v3/files?fields=id"
+	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -439,10 +451,12 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 	}
 
 	q := fmt.Sprintf("name = '%s' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", name)
+	
 	u, _ := url.Parse("https://www.googleapis.com/drive/v3/files")
 	v := u.Query()
 	v.Set("q", q)
-	v.Set("fields", "files(id, name)")
+	v.Set("spaces", "drive")
+	v.Set("fields", "files(id)")
 	u.RawQuery = v.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -464,8 +478,7 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 
 	var resData struct {
 		Files []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID string `json:"id"`
 		} `json:"files"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
