@@ -1,0 +1,72 @@
+name: Release Zephyr 🌬️
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            goos: linux
+            goarch: amd64
+          - os: windows
+            arch: amd64
+            goos: windows
+            goarch: amd64
+          - os: macOS-amd64
+            arch: amd64
+            goos: darwin
+            goarch: amd64
+          - os: macOS-arm64
+            arch: arm64
+            goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build Binaries
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          FOLDER_NAME="zephyr-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p $FOLDER_NAME
+          
+          SUFFIX=""
+          if [ "${{ matrix.goos }}" == "windows" ]; then
+            SUFFIX=".exe"
+          fi
+          
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o $FOLDER_NAME/zephyr-client$SUFFIX ./cmd/client
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o $FOLDER_NAME/zephyr-server$SUFFIX ./cmd/server
+          
+          [ -f client_config.json.example ] && cp client_config.json.example $FOLDER_NAME/
+          [ -f server_config.json.example ] && cp server_config.json.example $FOLDER_NAME/
+          [ -f README.md ] && cp README.md $FOLDER_NAME/
+          [ -f credentials.json ] && cp credentials.json $FOLDER_NAME/
+          
+          zip -r "${FOLDER_NAME}.zip" $FOLDER_NAME
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: zephyr-*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
