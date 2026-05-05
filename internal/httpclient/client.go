@@ -33,7 +33,7 @@ func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 func NewCustomClient(cfg TransportConfig) *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
+		KeepAlive: 60 * time.Second,
 	}
 
 	transport := &http.Transport{
@@ -49,9 +49,11 @@ func NewCustomClient(cfg TransportConfig) *http.Client {
 		},
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       180 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		DisableCompression:    false,
 	}
 
 	var rt http.RoundTripper = transport
