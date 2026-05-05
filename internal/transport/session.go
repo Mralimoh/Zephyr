@@ -23,14 +23,15 @@ type Session struct {
 	rxSeq        uint64
 	rxQueue      map[uint64]*Envelope
 	lastActivity time.Time
+	txBufAge     time.Time
 	closed       bool
 	rxClosed     bool
 	TargetAddr   string
 	ClientID     string
 
 	txCond *sync.Cond
-
-	RxChan chan []byte
+	rxBuf  []byte
+	rxCond *sync.Cond
 
 	Ctx    context.Context
 	cancel context.CancelFunc
@@ -42,12 +43,23 @@ func NewSession(id string) *Session {
 		ID:           id,
 		rxQueue:      make(map[uint64]*Envelope),
 		lastActivity: time.Now(),
-		RxChan:       make(chan []byte, 1024),
 		txBuf:        make([]byte, 0, FlushThresholdBytes*2),
+		rxBuf:        make([]byte, 0, FlushThresholdBytes*2),
 		Ctx:          ctx,
 		cancel:       cancel,
 	}
 	s.txCond = sync.NewCond(&s.mu)
+	s.rxCond = sync.NewCond(&s.mu)
+
+	go func() {
+		<-ctx.Done()
+		s.mu.Lock()
+		s.closed = true
+		s.rxCond.Broadcast()
+		s.txCond.Broadcast()
+		s.mu.Unlock()
+	}()
+
 	return s
 }
 
@@ -59,6 +71,10 @@ func (s *Session) EnqueueTx(data []byte) {
 		s.txCond.Wait()
 	}
 
+	if len(s.txBuf) == 0 {
+		s.txBufAge = time.Now()
+	}
+	
 	s.txBuf = append(s.txBuf, data...)
 	s.lastActivity = time.Now()
 }
@@ -75,27 +91,29 @@ func (s *Session) ProcessRx(env *Envelope) {
 	defer s.mu.Unlock()
 	s.lastActivity = time.Now()
 
-	if s.rxClosed {
+	if s.rxClosed || s.closed {
 		return
 	}
 
 	if env.Seq == s.rxSeq {
 		if len(env.Payload) > 0 {
-			s.RxChan <- env.Payload
+			s.rxBuf = append(s.rxBuf, env.Payload...)
+			s.rxCond.Broadcast()
 		}
 		s.rxSeq++
 		if env.Close {
 			s.rxClosed = true
 			s.closed = true
 			s.cancel()
-			close(s.RxChan)
+			s.rxCond.Broadcast()
 			return
 		}
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
 				if len(nextEnv.Payload) > 0 {
-					s.RxChan <- nextEnv.Payload
+					s.rxBuf = append(s.rxBuf, nextEnv.Payload...)
+					s.rxCond.Broadcast()
 				}
 				delete(s.rxQueue, s.rxSeq)
 				s.rxSeq++
@@ -103,7 +121,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 					s.rxClosed = true
 					s.closed = true
 					s.cancel()
-					close(s.RxChan)
+					s.rxCond.Broadcast()
 					return
 				}
 			} else {

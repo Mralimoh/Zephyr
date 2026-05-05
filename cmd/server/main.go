@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -103,41 +103,19 @@ func handleServerConn(sessionID, targetAddr string, session *transport.Session, 
 	}
 	defer conn.Close()
 
+	vConn := transport.NewVirtualConn(session, engine)
+	defer vConn.Close()
+
 	errCh := make(chan error, 2)
 
 	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := conn.Read(buf)
-			if n > 0 {
-				session.EnqueueTx(buf[:n])
-			}
-			if err != nil {
-				errCh <- err
-				return
-			}
-		}
+		_, err := io.Copy(conn, vConn)
+		errCh <- err
 	}()
 
 	go func() {
-		for {
-			select {
-			case <-session.Ctx.Done():
-				errCh <- fmt.Errorf("session cancelled")
-				return
-			case data, ok := <-session.RxChan:
-				if !ok {
-					errCh <- fmt.Errorf("session closed by remote")
-					return
-				}
-				if len(data) > 0 {
-					if _, err := conn.Write(data); err != nil {
-						errCh <- err
-						return
-					}
-				}
-			}
-		}
+		_, err := io.Copy(vConn, conn)
+		errCh <- err
 	}()
 
 	select {

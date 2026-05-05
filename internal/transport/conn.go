@@ -3,15 +3,12 @@ package transport
 import (
 	"io"
 	"net"
-	"sync"
 	"time"
 )
 
 type VirtualConn struct {
 	session *Session
 	engine  *Engine
-	readBuf []byte
-	mu      sync.Mutex
 }
 
 func NewVirtualConn(s *Session, e *Engine) *VirtualConn {
@@ -22,43 +19,20 @@ func NewVirtualConn(s *Session, e *Engine) *VirtualConn {
 }
 
 func (v *VirtualConn) Read(b []byte) (n int, err error) {
-	for {
-		v.mu.Lock()
-		if len(v.readBuf) > 0 {
-			n = copy(b, v.readBuf)
-			v.readBuf = v.readBuf[n:]
-			v.mu.Unlock()
-			return n, nil
-		}
-		v.mu.Unlock()
+	v.session.mu.Lock()
+	defer v.session.mu.Unlock()
 
-		select {
-		case data, ok := <-v.session.RxChan:
-			if !ok {
-				return 0, io.EOF
-			}
-
-			if len(data) > 0 {
-				v.mu.Lock()
-				n = copy(b, data)
-				if n < len(data) {
-					v.readBuf = data[n:]
-				}
-				v.mu.Unlock()
-				return n, nil
-			}
-		case <-v.session.Ctx.Done():
-			return 0, io.EOF
-		}
-
-		v.session.mu.Lock()
-		closed := v.session.closed
-		v.session.mu.Unlock()
-
-		if closed {
-			return 0, io.EOF
-		}
+	for len(v.session.rxBuf) == 0 && !v.session.closed && !v.session.rxClosed {
+		v.session.rxCond.Wait()
 	}
+
+	if len(v.session.rxBuf) > 0 {
+		n = copy(b, v.session.rxBuf)
+		v.session.rxBuf = v.session.rxBuf[n:]
+		return n, nil
+	}
+
+	return 0, io.EOF
 }
 
 func (v *VirtualConn) Write(b []byte) (n int, err error) {
@@ -72,9 +46,10 @@ func (v *VirtualConn) Close() error {
 	v.session.mu.Lock()
 	v.session.closed = true
 	v.session.txCond.Broadcast()
+	v.session.rxCond.Broadcast()
 	v.session.cancel()
 	v.session.mu.Unlock()
-	
+
 	return nil
 }
 

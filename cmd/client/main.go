@@ -105,19 +105,16 @@ func main() {
 		listenAddr = "127.0.0.1:1080"
 	}
 
-	server := socks5.NewServer(
+server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
-			sessionID := generateSessionID()
+			sessionID := generateSessionID()[:8]
 
-			host, port, err := net.SplitHostPort(addr)
-			if err == nil {
-				if net.ParseIP(host) != nil {
-					log.Printf("New covert session %s targeting RAW IP %s:%s (Warning: Local DNS Leak?)", sessionID, host, port)
-				} else {
-					log.Printf("New covert session %s targeting SECURE DOMAIN %s:%s", sessionID, host, port)
-				}
+			host, _, _ := net.SplitHostPort(addr)
+			
+			if net.ParseIP(host) == nil {
+				log.Printf("[%s] Target: %s [Remote DNS]", sessionID, addr)
 			} else {
-				log.Printf("New covert session %s targeting %s", sessionID, addr)
+				log.Printf("[%s] Target: %s [Local DNS Leak Warning]", sessionID, addr)
 			}
 
 			session := transport.NewSession(sessionID)

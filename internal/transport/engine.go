@@ -31,12 +31,15 @@ type Engine struct {
 
 	OnNewSession func(sessionID, targetAddr string, s *Session)
 
-	sem chan struct{}
+	txSem chan struct{}
+	rxSem chan struct{}
 
 	processed   map[string]bool
 	processedMu sync.Mutex
 
 	bootTime int64
+
+	bufferPool sync.Pool
 }
 
 func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
@@ -46,10 +49,15 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		pollTicker:  500 * time.Millisecond,
-		flushTicker: 300 * time.Millisecond,
+		pollTicker:     200 * time.Millisecond,
+		flushTicker:    100 * time.Millisecond,
 		bootTime:       time.Now().UnixNano(),
 	}
+	
+	e.bufferPool.New = func() any {
+		return new(bytes.Buffer)
+	}
+
 	if isClient {
 		e.myDir = DirReq
 		e.peerDir = DirRes
@@ -57,7 +65,8 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		e.myDir = DirRes
 		e.peerDir = DirReq
 	}
-	e.sem = make(chan struct{}, 8)
+	e.txSem = make(chan struct{}, 8)
+	e.rxSem = make(chan struct{}, 8)
 	return e
 }
 
@@ -133,8 +142,15 @@ func (e *Engine) flushAll(ctx context.Context) {
 			s.closed = true
 		}
 
-		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
+		var bufferAge time.Duration
+		if len(s.txBuf) > 0 {
+			bufferAge = time.Since(s.lastActivity)
+		}
+
+		shouldSend := s.closed || 
+			(s.txSeq == 0 && e.myDir == DirReq) || 
 			len(s.txBuf) >= FlushThresholdBytes || 
+			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker) || 
 			(len(s.txBuf) > 0 && time.Since(s.lastActivity) > 100*time.Millisecond)
 
 		if !shouldSend {
@@ -176,11 +192,14 @@ func (e *Engine) flushAll(ctx context.Context) {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, fnameCID, time.Now().UnixNano())
 
 		go func(fname string, m []Envelope) {
-			e.sem <- struct{}{}
-			defer func() { <-e.sem }()
+			e.txSem <- struct{}{}
+			defer func() { <-e.txSem }()
 
-			var buf bytes.Buffer
-			zw, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zstd.SpeedFastest))
+			buf := e.bufferPool.Get().(*bytes.Buffer)
+			buf.Reset()
+			defer e.bufferPool.Put(buf)
+
+			zw, err := zstd.NewWriter(buf, zstd.WithEncoderLevel(zstd.SpeedFastest))
 			if err != nil {
 				log.Printf("zstd writer error: %v", err)
 				return
@@ -193,17 +212,25 @@ func (e *Engine) flushAll(ctx context.Context) {
 			}
 			zw.Close()
 
-			payload := buf.Bytes()
+			payloadReader := bytes.NewReader(buf.Bytes())
+			
 			maxRetries := 3
 			for attempt := 1; attempt <= maxRetries; attempt++ {
-				err := e.backend.Upload(ctx, fname, bytes.NewReader(payload))
+				payloadReader.Seek(0, 0)
+				
+				err := e.backend.Upload(ctx, fname, payloadReader)
 				if err == nil {
 					return
 				}
 				
 				log.Printf("upload retry %d/%d for %s: %v", attempt, maxRetries, fname, err)
 				if attempt < maxRetries {
-					time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+					delay := time.Duration(attempt) * 500 * time.Millisecond
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(delay):
+					}
 				}
 			}
 		}(filename, mux)
@@ -271,24 +298,20 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				wg.Wait()
 			}
 
+			e.sessionMu.RLock()
+			activeSessions := len(e.sessions)
+			e.sessionMu.RUnlock()
+
 			if foundNewData {
 				currentInterval = minInterval
-				timer.Reset(50 * time.Millisecond)
+				timer.Reset(10 * time.Millisecond) 
+			} else if activeSessions > 0 {
+				currentInterval = minInterval
+				timer.Reset(currentInterval)
 			} else {
-				e.sessionMu.RLock()
-				activeSessions := len(e.sessions)
-				e.sessionMu.RUnlock()
-
-				if activeSessions > 0 {
-					currentInterval += 200 * time.Millisecond
-					if currentInterval > 1*time.Second {
-						currentInterval = 1 * time.Second
-					}
-				} else {
-					currentInterval += 500 * time.Millisecond
-					if currentInterval > maxInterval {
-						currentInterval = maxInterval
-					}
+				currentInterval += 500 * time.Millisecond
+				if currentInterval > maxInterval {
+					currentInterval = maxInterval
 				}
 				timer.Reset(currentInterval)
 			}
@@ -297,8 +320,8 @@ func (e *Engine) pollLoop(ctx context.Context) {
 }
 
 func (e *Engine) processFile(ctx context.Context, fname string) {
-	e.sem <- struct{}{}
-	defer func() { <-e.sem }()
+	e.rxSem <- struct{}{}
+	defer func() { <-e.rxSem }()
 
 	rc, err := e.backend.Download(ctx, fname)
 	if err != nil {
@@ -366,6 +389,49 @@ func (e *Engine) RemoveSession(id string) {
 }
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
+	doCleanup := func() {
+		e.processedMu.Lock()
+		if len(e.processed) > 2000 {
+			e.processed = make(map[string]bool)
+		}
+		e.processedMu.Unlock()
+
+		e.closedSessionsMu.Lock()
+		for id, t := range e.closedSessions {
+			if time.Since(t) > 1*time.Minute {
+				delete(e.closedSessions, id)
+			}
+		}
+		e.closedSessionsMu.Unlock()
+
+		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+		for _, pref := range prefixes {
+			files, err := e.backend.ListQuery(ctx, pref)
+			if err != nil {
+				continue
+			}
+
+			for _, f := range files {
+				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
+				if len(parts) < 4 {
+					continue 
+				}
+
+				nanoStr := parts[len(parts)-1]
+				nanos, err := strconv.ParseInt(nanoStr, 10, 64)
+				if err != nil {
+					continue
+				}
+
+				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
+					e.backend.Delete(ctx, f)
+				}
+			}
+		}
+	}
+
+	doCleanup()
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -374,44 +440,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.processedMu.Lock()
-			if len(e.processed) > 2000 {
-				e.processed = make(map[string]bool)
-			}
-			e.processedMu.Unlock()
-
-			e.closedSessionsMu.Lock()
-			for id, t := range e.closedSessions {
-				if time.Since(t) > 1*time.Minute {
-					delete(e.closedSessions, id)
-				}
-			}
-			e.closedSessionsMu.Unlock()
-
-			prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
-			for _, pref := range prefixes {
-				files, err := e.backend.ListQuery(ctx, pref)
-				if err != nil {
-					continue
-				}
-
-				for _, f := range files {
-					parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
-					if len(parts) < 4 {
-						continue 
-					}
-
-					nanoStr := parts[len(parts)-1]
-					nanos, err := strconv.ParseInt(nanoStr, 10, 64)
-					if err != nil {
-						continue
-					}
-
-					if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
-						e.backend.Delete(ctx, f)
-					}
-				}
-			}
+			doCleanup()
 		}
 	}
 }
