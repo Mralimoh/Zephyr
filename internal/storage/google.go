@@ -219,7 +219,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	}
 	metaBytes, _ := json.Marshal(meta)
 
-	bodyReader, pw := io.Pipe()
+	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
 
 	go func() {
@@ -237,7 +237,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		io.Copy(part2, data)
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", bodyReader)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", pr)
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	}
 	
 	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("upload returned %d: %s", resp.StatusCode, string(body))
+	return fmt.Errorf("upload error %d: %s", resp.StatusCode, string(body))
 }
 
 func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string, error) {

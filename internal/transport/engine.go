@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 	"bytes"
+	"io"
 
 	"Zephyr/internal/storage"
 	"github.com/klauspost/compress/zstd"
@@ -171,105 +172,74 @@ func (e *Engine) flushAll(ctx context.Context) {
 	e.sessionMu.Unlock()
 
 	muxes := make(map[string][]Envelope)
-	var closedSessionIDs []string
+	var closedIDs []string
 
 	for _, s := range sessions {
 		s.mu.Lock()
 		if time.Since(s.lastActivity) > 60*time.Second {
 			s.closed = true
 		}
-		var bufferAge time.Duration
-		if len(s.txBuf) > 0 {
-			bufferAge = time.Since(s.txBufAge)
-		}
-
-		shouldSend := s.closed ||
-			(s.txSeq == 0 && e.myDir == DirReq) ||
-			len(s.txBuf) >= FlushThresholdBytes ||
-			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker)
+		
+		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
+		              len(s.txBuf) >= FlushThresholdBytes || 
+		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= e.flushTicker)
 
 		if !shouldSend {
 			s.mu.Unlock()
 			continue
 		}
 
-		payload := s.txBuf
-		seq := s.txSeq
-		isClosed := s.closed
-		targetAddr := s.TargetAddr
-		clientID := s.ClientID
+		env := Envelope{
+			SessionID:  s.ID,
+			Seq:        s.txSeq,
+			Payload:    s.txBuf,
+			Close:      s.closed,
+			TargetAddr: s.TargetAddr,
+		}
+		
+		if s.closed {
+			closedIDs = append(closedIDs, s.ID)
+		}
+
+		cid := s.ClientID
+		if cid == "" && e.myDir == DirReq { cid = e.id }
+		muxes[cid] = append(muxes[cid], env)
 
 		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
 		s.txSeq++
 		s.txCond.Broadcast()
 		s.mu.Unlock()
-
-		if isClosed {
-			closedSessionIDs = append(closedSessionIDs, s.ID)
-		}
-
-		cid := clientID
-		if cid == "" && e.myDir == DirReq {
-			cid = e.id
-		}
-
-		env := Envelope{
-			SessionID:  s.ID,
-			Seq:        seq,
-			Payload:    payload,
-			Close:      isClosed,
-			TargetAddr: targetAddr,
-		}
-		muxes[cid] = append(muxes[cid], env)
 	}
 
 	for cid, mux := range muxes {
-		fnameCID := cid
-		if fnameCID == "" {
-			fnameCID = "unknown"
-		}
-		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, fnameCID, time.Now().UnixNano())
-
+		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
 		e.txSem <- struct{}{}
 
-		go func(fname string, m []Envelope) {
+		go func(fname string, envelopes []Envelope) {
 			defer func() { <-e.txSem }()
 
-			buf := e.bufferPool.Get().(*bytes.Buffer)
-			buf.Reset()
-			defer e.bufferPool.Put(buf)
+			pr, pw := io.Pipe()
 
-			zw := e.zstdWriterPool.Get().(*zstd.Encoder)
-			zw.Reset(buf)
-			
-			for _, env := range m {
-				env.Encode(zw)
-			}
-			
-			zw.Close()
-			e.zstdWriterPool.Put(zw)
+			go func() {
+				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
+				zw.Reset(pw)
+				for _, env := range envelopes {
+					env.Encode(zw)
+				}
+				zw.Close()
+				e.zstdWriterPool.Put(zw)
+				pw.Close()
+			}()
 
-			payloadReader := bytes.NewReader(buf.Bytes())
-			maxRetries := 3
-			for attempt := 1; attempt <= maxRetries; attempt++ {
-				payloadReader.Seek(0, 0)
-				err := e.backend.Upload(ctx, fname, payloadReader)
-				if err == nil {
-					e.lastTxTime = time.Now()
-					return
-				}
-				if attempt < maxRetries {
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
-					}
-				}
+			err := e.backend.Upload(ctx, fname, pr)
+			if err == nil {
+				e.lastTxTime = time.Now()
 			}
+			pr.Close()
 		}(filename, mux)
 	}
 
-	for _, id := range closedSessionIDs {
+	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
 }
