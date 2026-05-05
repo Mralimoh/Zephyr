@@ -28,7 +28,9 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 
 	if len(v.session.rxBuf) > 0 {
 		n = copy(b, v.session.rxBuf)
-		v.session.rxBuf = v.session.rxBuf[n:]
+		
+		remaining := copy(v.session.rxBuf, v.session.rxBuf[n:])
+		v.session.rxBuf = v.session.rxBuf[:remaining]
 		
 		v.session.rxCond.Broadcast()
 		return n, nil

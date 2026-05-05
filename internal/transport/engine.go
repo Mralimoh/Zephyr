@@ -43,6 +43,8 @@ type Engine struct {
 
 	fileRetries   map[string]int
 	fileRetriesMu sync.Mutex
+
+	zstdWriterPool sync.Pool
 }
 
 func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
@@ -61,6 +63,11 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 
 	e.bufferPool.New = func() any {
 		return new(bytes.Buffer)
+	}
+
+	e.zstdWriterPool.New = func() any {
+		zw, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		return zw
 	}
 
 	if isClient {
@@ -160,11 +167,9 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 	for _, s := range sessions {
 		s.mu.Lock()
-
 		if time.Since(s.lastActivity) > 60*time.Second {
 			s.closed = true
 		}
-
 		var bufferAge time.Duration
 		if len(s.txBuf) > 0 {
 			bufferAge = time.Since(s.txBufAge)
@@ -190,7 +195,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
 		s.txSeq++
 		s.txCond.Broadcast()
-		
 		s.mu.Unlock()
 
 		if isClosed {
@@ -209,7 +213,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 			Close:      isClosed,
 			TargetAddr: targetAddr,
 		}
-
 		muxes[cid] = append(muxes[cid], env)
 	}
 
@@ -220,28 +223,28 @@ func (e *Engine) flushAll(ctx context.Context) {
 		}
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, fnameCID, time.Now().UnixNano())
 
+		e.txSem <- struct{}{}
+
 		go func(fname string, m []Envelope) {
-			e.txSem <- struct{}{}
 			defer func() { <-e.txSem }()
 
 			buf := e.bufferPool.Get().(*bytes.Buffer)
 			buf.Reset()
 			defer e.bufferPool.Put(buf)
 
-			zw, err := zstd.NewWriter(buf, zstd.WithEncoderLevel(zstd.SpeedFastest))
-			if err != nil {
-				return
-			}
-
+			zw := e.zstdWriterPool.Get().(*zstd.Encoder)
+			zw.Reset(buf)
+			
 			for _, env := range m {
 				if err := env.Encode(zw); err != nil {
 					break
 				}
 			}
+			
 			zw.Close()
+			e.zstdWriterPool.Put(zw)
 
 			payloadReader := bytes.NewReader(buf.Bytes())
-
 			maxRetries := 3
 			for attempt := 1; attempt <= maxRetries; attempt++ {
 				payloadReader.Seek(0, 0)
@@ -250,7 +253,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 					e.lastTxTime = time.Now()
 					return
 				}
-
 				if attempt < maxRetries {
 					select {
 					case <-ctx.Done():

@@ -23,7 +23,9 @@ import (
 
 func generateSessionID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		log.Fatalf("Critical Error: Failed to generate random session ID: %v", err)
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -107,7 +109,7 @@ log.Println("Starting Zephyr Client...")
 
 server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
-			sessionID := generateSessionID()[:8]
+			sessionID := generateSessionID()[:16]
 
 			session := transport.NewSession(sessionID)
 			session.TargetAddr = addr
