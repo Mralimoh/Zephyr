@@ -59,8 +59,8 @@ Zephyr works by treating a cloud storage folder as a high-speed data queue:
 ### 2. Build Binaries / ساخت فایل‌های اجرایی
 
 ```bash
-go build -o bin/client ./cmd/client/main.go
-go build -o bin/server ./cmd/server/main.go
+go build -o client.exe ./cmd/client
+go build -o server ./cmd/server
 ```
 
 ### 3. Configuration / پیکربندی
