@@ -37,9 +37,12 @@ type Engine struct {
 	processed   map[string]bool
 	processedMu sync.Mutex
 
-	bootTime int64
-
 	bufferPool sync.Pool
+
+	lastTxTime time.Time
+
+	fileRetries   map[string]int
+	fileRetriesMu sync.Mutex
 }
 
 func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
@@ -49,11 +52,13 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		pollTicker:     200 * time.Millisecond,
-		flushTicker:    100 * time.Millisecond,
-		bootTime:       time.Now().UnixNano(),
+		pollTicker:     100 * time.Millisecond,
+		flushTicker:    50 * time.Millisecond,
+		txSem:          make(chan struct{}, 16),
+		rxSem:          make(chan struct{}, 16),
+		fileRetries:    make(map[string]int),
 	}
-	
+
 	e.bufferPool.New = func() any {
 		return new(bytes.Buffer)
 	}
@@ -65,8 +70,7 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		e.myDir = DirRes
 		e.peerDir = DirReq
 	}
-	e.txSem = make(chan struct{}, 8)
-	e.rxSem = make(chan struct{}, 8)
+
 	return e
 }
 
@@ -91,7 +95,26 @@ func (e *Engine) SetFlushRate(ms int) {
 	}
 }
 
+func (e *Engine) makeBaseline(ctx context.Context) {
+	prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+
+	for _, pref := range prefixes {
+		files, err := e.backend.ListQuery(ctx, pref)
+		if err != nil {
+			continue
+		}
+
+		e.processedMu.Lock()
+		for _, f := range files {
+			e.processed[f] = true
+		}
+		e.processedMu.Unlock()
+	}
+}
+
 func (e *Engine) Start(ctx context.Context) {
+	e.makeBaseline(ctx)
+
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
 	go e.cleanupLoop(ctx)
@@ -138,13 +161,13 @@ func (e *Engine) flushAll(ctx context.Context) {
 	for _, s := range sessions {
 		s.mu.Lock()
 
-		if time.Since(s.lastActivity) > 10*time.Second {
+		if time.Since(s.lastActivity) > 60*time.Second {
 			s.closed = true
 		}
 
 		var bufferAge time.Duration
 		if len(s.txBuf) > 0 {
-			bufferAge = time.Since(s.lastActivity)
+			bufferAge = time.Since(s.txBufAge)
 		}
 
 		shouldSend := s.closed || 
@@ -201,7 +224,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 			zw, err := zstd.NewWriter(buf, zstd.WithEncoderLevel(zstd.SpeedFastest))
 			if err != nil {
-				log.Printf("zstd writer error: %v", err)
 				return
 			}
 			
@@ -217,19 +239,17 @@ func (e *Engine) flushAll(ctx context.Context) {
 			maxRetries := 3
 			for attempt := 1; attempt <= maxRetries; attempt++ {
 				payloadReader.Seek(0, 0)
-				
 				err := e.backend.Upload(ctx, fname, payloadReader)
 				if err == nil {
+					e.lastTxTime = time.Now()
 					return
 				}
 				
-				log.Printf("upload retry %d/%d for %s: %v", attempt, maxRetries, fname, err)
 				if attempt < maxRetries {
-					delay := time.Duration(attempt) * 500 * time.Millisecond
 					select {
 					case <-ctx.Done():
 						return
-					case <-time.After(delay):
+					case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
 					}
 				}
 			}
@@ -242,18 +262,13 @@ func (e *Engine) flushAll(ctx context.Context) {
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
-	minInterval := e.pollTicker
-	maxInterval := 5 * time.Second
-	currentInterval := minInterval
-
-	timer := time.NewTimer(currentInterval)
-	defer timer.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
+		default:
+			isBurstMode := time.Since(e.lastTxTime) < 5*time.Second
+
 			prefix := string(e.peerDir) + "-"
 			if e.myDir == DirReq {
 				prefix += e.id + "-mux-"
@@ -261,8 +276,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 			files, err := e.backend.ListQuery(ctx, prefix)
 			if err != nil {
-				log.Printf("poll list error: %v", err)
-				timer.Reset(currentInterval)
+				time.Sleep(e.pollTicker)
 				continue
 			}
 
@@ -270,15 +284,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			if len(files) > 0 {
 				var wg sync.WaitGroup
 				for _, f := range files {
-					parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
-					if len(parts) >= 4 {
-						tsStr := parts[len(parts)-1]
-						fileTs, _ := strconv.ParseInt(tsStr, 10, 64)
-						if fileTs < e.bootTime {
-							continue
-						}
-					}
-
 					e.processedMu.Lock()
 					already := e.processed[f]
 					if !already {
@@ -303,17 +308,15 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			e.sessionMu.RUnlock()
 
 			if foundNewData {
-				currentInterval = minInterval
-				timer.Reset(10 * time.Millisecond) 
+				continue
+			}
+
+			if isBurstMode && activeSessions > 0 {
+				time.Sleep(50 * time.Millisecond)
 			} else if activeSessions > 0 {
-				currentInterval = minInterval
-				timer.Reset(currentInterval)
+				time.Sleep(e.pollTicker)
 			} else {
-				currentInterval += 500 * time.Millisecond
-				if currentInterval > maxInterval {
-					currentInterval = maxInterval
-				}
-				timer.Reset(currentInterval)
+				time.Sleep(5 * time.Second)
 			}
 		}
 	}
@@ -325,17 +328,36 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 	rc, err := e.backend.Download(ctx, fname)
 	if err != nil {
-		log.Printf("download error %s: %v", fname, err)
-		e.processedMu.Lock()
-		delete(e.processed, fname)
-		e.processedMu.Unlock()
+		log.Printf("[Engine] Download error for %s: %v", fname, err)
+		
+		e.fileRetriesMu.Lock()
+		e.fileRetries[fname]++
+		retryCount := e.fileRetries[fname]
+		e.fileRetriesMu.Unlock()
+
+		if retryCount < 3 {
+			e.processedMu.Lock()
+			delete(e.processed, fname)
+			e.processedMu.Unlock()
+		} else {
+			log.Printf("[Engine] Giving up on file %s after %d attempts", fname, retryCount)
+			e.backend.Delete(ctx, fname)
+			
+			e.fileRetriesMu.Lock()
+			delete(e.fileRetries, fname)
+			e.fileRetriesMu.Unlock()
+		}
 		return
 	}
 	defer rc.Close()
 
+	e.fileRetriesMu.Lock()
+	delete(e.fileRetries, fname)
+	e.fileRetriesMu.Unlock()
+
 	zr, err := zstd.NewReader(rc)
 	if err != nil {
-		log.Printf("zstd reader error %s: %v", fname, err)
+		log.Printf("[Engine] Zstd reader error %s: %v", fname, err)
 		return
 	}
 	defer zr.Close()
@@ -361,11 +383,13 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 		e.sessionMu.Lock()
 		s, exists := e.sessions[env.SessionID]
+		
 		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
 			s = NewSession(env.SessionID)
 			s.ClientID = fileClientID
 			e.sessions[env.SessionID] = s
 			e.sessionMu.Unlock()
+			
 			e.OnNewSession(env.SessionID, env.TargetAddr, s)
 		} else {
 			e.sessionMu.Unlock()
@@ -375,6 +399,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 			s.ProcessRx(&env)
 		}
 	}
+
 	e.backend.Delete(ctx, fname)
 }
 

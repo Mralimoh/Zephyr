@@ -109,22 +109,22 @@ server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
 			sessionID := generateSessionID()[:8]
 
-			host, _, _ := net.SplitHostPort(addr)
-			
-			if net.ParseIP(host) == nil {
-				log.Printf("[%s] Target: %s [Remote DNS]", sessionID, addr)
-			} else {
-				log.Printf("[%s] Target: %s [Local DNS Leak Warning]", sessionID, addr)
-			}
-
 			session := transport.NewSession(sessionID)
 			session.TargetAddr = addr
 			engine.AddSession(session)
 
-			session.EnqueueTx(nil)
+			go session.EnqueueTx(nil)
+
+			host, _, _ := net.SplitHostPort(addr)
+			if net.ParseIP(host) == nil {
+				log.Printf("[%s] Target: %s [Optimistic Connect/Remote DNS]", sessionID, addr)
+			} else {
+				log.Printf("[%s] Target: %s [Optimistic Connect/Local IP]", sessionID, addr)
+			}
 
 			return transport.NewVirtualConn(session, engine), nil
 		}),
+
 		socks5.WithAssociateHandle(func(ctx context.Context, w io.Writer, req *socks5.Request) error {
 			socks5.SendReply(w, statute.RepCommandNotSupported, nil)
 			return fmt.Errorf("covert UDP not supported")
