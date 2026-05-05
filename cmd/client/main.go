@@ -5,20 +5,20 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"sync"
+	"encoding/binary"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
 	"Zephyr/internal/storage"
 	"Zephyr/internal/transport"
 	"github.com/things-go/go-socks5"
-	"github.com/things-go/go-socks5/statute"
 )
 
 func generateSessionID() string {
@@ -107,31 +107,28 @@ log.Println("Starting Zephyr Client...")
 		listenAddr = "127.0.0.1:1080"
 	}
 
-server := socks5.NewServer(
+	fdns := newFakeDNS()
+
+	server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
-			sessionID := generateSessionID()[:16]
-
-			session := transport.NewSession(sessionID)
-			session.TargetAddr = addr
-			engine.AddSession(session)
-
-			go session.EnqueueTx(nil)
-
-			host, _, _ := net.SplitHostPort(addr)
-			if net.ParseIP(host) == nil {
-				log.Printf("[%s] Target: %s [Optimistic Connect/Remote DNS]", sessionID, addr)
-			} else {
-				log.Printf("[%s] Target: %s [Optimistic Connect/Local IP]", sessionID, addr)
+			host, port, _ := net.SplitHostPort(addr)
+			
+			realHost, isFake := fdns.GetHostname(host)
+			targetAddr := addr
+			if isFake {
+				targetAddr = net.JoinHostPort(realHost, port)
+				log.Printf("[Dial] Un-faking: %s -> %s", host, realHost)
 			}
+
+			sessionID := generateSessionID()[:16]
+			session := transport.NewSession(sessionID)
+			session.TargetAddr = targetAddr
+			engine.AddSession(session)
 
 			return transport.NewVirtualConn(session, engine), nil
 		}),
 
-		socks5.WithAssociateHandle(func(ctx context.Context, w io.Writer, req *socks5.Request) error {
-			socks5.SendReply(w, statute.RepCommandNotSupported, nil)
-			return fmt.Errorf("covert UDP not supported")
-		}),
-		socks5.WithResolver(rawResolver{}),
+		socks5.WithResolver(rawResolver{fdns: fdns}),
 	)
 
 	log.Printf("Listening for SOCKS5 on %s...", listenAddr)
@@ -147,4 +144,58 @@ server := socks5.NewServer(
 	<-sigCh
 	log.Println("Shutting down client...")
 	cancel()
+}
+
+type fakeDNS struct {
+	mu       sync.RWMutex
+	table    map[string]string
+	revTable map[string]string
+	nextIP   uint32
+}
+
+func newFakeDNS() *fakeDNS {
+	return &fakeDNS{
+		table:    make(map[string]string),
+		revTable: make(map[string]string),
+		nextIP:   0x0A000001,
+	}
+}
+
+func (f *fakeDNS) GetIP(hostname string) net.IP {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if ipStr, ok := f.revTable[hostname]; ok {
+		return net.ParseIP(ipStr)
+	}
+
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, f.nextIP)
+	ipStr := ip.String()
+
+	f.table[ipStr] = hostname
+	f.revTable[hostname] = ipStr
+	f.nextIP++
+	if f.nextIP > 0x0AFFFFFF {
+		f.nextIP = 0x0A000001
+	}
+
+	return ip
+}
+
+func (f *fakeDNS) GetHostname(ip string) (string, bool) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	host, ok := f.table[ip]
+	return host, ok
+}
+
+type rawResolver struct {
+	fdns *fakeDNS
+}
+
+func (r rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
+	fakeIP := r.fdns.GetIP(name)
+	log.Printf("[DNS] Fake-IP: %s -> %s", name, fakeIP.String())
+	return ctx, fakeIP, nil
 }
