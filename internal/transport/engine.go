@@ -38,6 +38,7 @@ type Engine struct {
 	processedMu sync.Mutex
 
 	bufferPool sync.Pool
+	bytePool   sync.Pool
 
 	lastTxTime time.Time
 
@@ -45,6 +46,7 @@ type Engine struct {
 	fileRetriesMu sync.Mutex
 
 	zstdWriterPool sync.Pool
+	flushSignal    chan struct{}
 }
 
 func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
@@ -59,10 +61,16 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 16),
 		fileRetries:    make(map[string]int),
+		flushSignal:    make(chan struct{}, 1),
 	}
 
 	e.bufferPool.New = func() any {
 		return new(bytes.Buffer)
+	}
+
+	e.bytePool.New = func() any {
+		b := make([]byte, FlushThresholdBytes*2)
+		return &b
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -178,8 +186,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 		shouldSend := s.closed ||
 			(s.txSeq == 0 && e.myDir == DirReq) ||
 			len(s.txBuf) >= FlushThresholdBytes ||
-			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker) ||
-			(len(s.txBuf) > 0 && time.Since(s.lastActivity) > 100*time.Millisecond)
+			(len(s.txBuf) > 0 && bufferAge >= e.flushTicker)
 
 		if !shouldSend {
 			s.mu.Unlock()
@@ -236,9 +243,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 			zw.Reset(buf)
 			
 			for _, env := range m {
-				if err := env.Encode(zw); err != nil {
-					break
-				}
+				env.Encode(zw)
 			}
 			
 			zw.Close()
@@ -341,8 +346,6 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 	rc, err := e.backend.Download(ctx, fname)
 	if err != nil {
-		log.Printf("[Engine] Download error for %s: %v", fname, err)
-		
 		e.fileRetriesMu.Lock()
 		e.fileRetries[fname]++
 		retryCount := e.fileRetries[fname]
@@ -353,9 +356,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 			delete(e.processed, fname)
 			e.processedMu.Unlock()
 		} else {
-			log.Printf("[Engine] Giving up on file %s after %d attempts", fname, retryCount)
 			e.backend.Delete(ctx, fname)
-			
 			e.fileRetriesMu.Lock()
 			delete(e.fileRetries, fname)
 			e.fileRetriesMu.Unlock()
@@ -370,7 +371,6 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 	zr, err := zstd.NewReader(rc)
 	if err != nil {
-		log.Printf("[Engine] Zstd reader error %s: %v", fname, err)
 		return
 	}
 	defer zr.Close()
@@ -396,13 +396,11 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 		e.sessionMu.Lock()
 		s, exists := e.sessions[env.SessionID]
-		
 		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
 			s = NewSession(env.SessionID)
 			s.ClientID = fileClientID
 			e.sessions[env.SessionID] = s
 			e.sessionMu.Unlock()
-			
 			e.OnNewSession(env.SessionID, env.TargetAddr, s)
 		} else {
 			e.sessionMu.Unlock()
