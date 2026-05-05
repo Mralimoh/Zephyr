@@ -275,7 +275,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			isBurstMode := time.Since(e.lastTxTime) < 5*time.Second
+			isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
 
 			prefix := string(e.peerDir) + "-"
 			if e.myDir == DirReq {
@@ -291,7 +291,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			foundNewData := false
 			if len(files) > 0 {
 				var newFiles []string
-
 				e.processedMu.Lock()
 				for _, f := range files {
 					if !e.processed[f] {
@@ -323,10 +322,12 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				continue
 			}
 
-			if isBurstMode && activeSessions > 0 {
-				time.Sleep(50 * time.Millisecond)
-			} else if activeSessions > 0 {
-				time.Sleep(e.pollTicker)
+			if activeSessions > 0 {
+				if isAggressiveMode {
+					time.Sleep(20 * time.Millisecond)
+				} else {
+					time.Sleep(50 * time.Millisecond)
+				}
 			} else {
 				time.Sleep(5 * time.Second)
 			}
