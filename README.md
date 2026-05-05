@@ -73,9 +73,9 @@ Create your `config.json` based on the provided examples. (Zephyr uses intellige
 {
   "listen_addr": "127.0.0.1:1080",
   "storage_type": "google",
-  "google_folder_id": "",
+  "google_folder_id": "YOUR_FOLDER_ID",
   "refresh_rate_ms": 100,
-  "flush_rate_ms": 50,
+  "flush_rate_ms": 200,
   "transport": {
     "TargetIP": "216.239.38.120:443",
     "SNI": "google.com",
@@ -89,9 +89,9 @@ Create your `config.json` based on the provided examples. (Zephyr uses intellige
 ```json
 {
   "storage_type": "google",
-  "google_folder_id": "YOUR_FOLDER_ID_GENERATED_BY_CLIENT",
+  "google_folder_id": "YOUR_FOLDER_ID",
   "refresh_rate_ms": 100,
-  "flush_rate_ms": 50
+  "flush_rate_ms": 200
 }
 ```
 
