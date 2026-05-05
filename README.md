@@ -1,0 +1,294 @@
+**# Zephyr 🌬️**
+
+
+
+**\*\*Zephyr\*\* is an advanced, highly-optimized covert transport system designed to tunnel network traffic (SOCKS5) through common cloud storage platforms like Google Drive. By leveraging legitimate API traffic, it allows for reliable and stealthy communication in restrictive environments.**
+
+
+
+**\*\*Zephyr\*\* (زِفیر) یک سیستم انتقال پنهان (Covert Transport) پیشرفته و بهینه‌سازی شده است که برای تونل کردن ترافیک شبکه (SOCKS5) از طریق پلتفرم‌های ذخیره‌سازی ابری رایج مانند گوگل درایو طراحی شده است. این ابزار با بهره‌گیری از ترافیک قانونی API، امکان ارتباط مطمئن و پنهان در محیط‌های محدود شده را فراهم می‌کند.**
+
+
+
+**---**
+
+
+
+**## ⚠️ Disclaimer / سلب مسئولیت**
+
+
+
+**\*\*English:\*\* This project is intended for personal usage and research purposes only. Please do not use it for illegal purposes, and do not use it in a production environment. The authors are not responsible for any misuse of this tool.**
+
+
+
+**\*\*فارسی:\*\* این پروژه صرفاً برای استفاده شخصی و اهداف تحقیقاتی در نظر گرفته شده است. لطفاً از آن برای مقاصد غیرقانونی استفاده نکنید و در محیط‌های عملیاتی (Production) از آن استفاده نشود. نویسندگان هیچ مسئولیتی در قبال سوء استفاده از این ابزار ندارند.**
+
+
+
+**---**
+
+
+
+**## ⚙️ How it Works / نحوه عملکرد**
+
+
+
+**### English**
+
+**Zephyr works by treating a cloud storage folder as a high-speed data queue:**
+
+**1. \*\*Client:\*\* Captures local SOCKS5 requests, multiplexes them, and bundles them into a compact, \*\*Zstd-compressed\*\* Binary Protocol. These binary "packets" are uploaded to a specific Google Drive folder.**
+
+**2. \*\*Server:\*\* Continuously polls the Drive folder. When it finds a request from a client, it downloads it, opens a real TCP connection to the destination, and sends back the result as compressed response files.**
+
+
+
+**### فارسی**
+
+**نحوه عملکرد این ابزار به این صورت است که از یک پوشه در فضای ابری به عنوان صف داده‌های پرسرعت استفاده می‌کند:**
+
+**1. \*\*کلاینت:\*\* درخواست‌های SOCKS5 محلی را دریافت کرده، آن‌ها را تجمیع (Multiplex) و در قالب یک پروتکل باینری با \*\*فشرده‌سازی Zstd\*\* بسته‌بندی می‌کند. این بسته‌ها در یک پوشه خاص در گوگل درایو آپلود می‌شوند.**
+
+**2. \*\*سرور:\*\* به طور مداوم پوشه درایو را بررسی می‌کند. با یافتن درخواست جدید، آن را دانلود کرده، اتصال TCP واقعی را برقرار می‌کند و نتیجه را در قالب فایل‌های پاسخ فشرده به درایو بازمی‌گرداند.**
+
+
+
+**---**
+
+
+
+**## 🚀 Setup \& Installation / نصب و راه‌اندازی**
+
+
+
+**### Prerequisites / پیش‌نیازها**
+
+**\* \*\*Go (1.25 or higher)\*\***
+
+**\* \*\*Google Drive API Credentials:\*\* You need a `credentials.json` (OAuth2) file.**
+
+**\* \*\*Shared Folder (Auto):\*\* If you leave `google\_folder\_id` empty, the tool will automatically create a folder named \*\*"Zephyr-Data"\*\* and save its ID to your config!**
+
+
+
+**### 1. Obtain Credentials / دریافت فایل اعتبارنامه**
+
+
+
+**To get your `credentials.json`, follow the instructions on the Google Drive API Go Quickstart or follow these steps:**
+
+
+
+**برای دریافت فایل `credentials.json` می‌توانید طبق دستورالعمل‌های موجود در شروع سریع Google Drive API برای Go عمل کنید یا مراحل زیر را انجام دهید:**
+
+
+
+**\*\*English:\*\***
+
+**1. \*\*Enable the API:\*\* Go to the Google Cloud Console, create a project, and enable the Google Drive API.**
+
+**2. \*\*Configure Consent Screen:\*\* Go to "APIs \& Services" > "OAuth consent screen." Fill in the app name and user support email (Branding).**
+
+**3. \*\*Create Credentials:\*\* Go to "Credentials" > "Create Credentials" > OAuth client ID. Select \*\*Desktop App\*\* as the application type.**
+
+**4. \*\*Download JSON:\*\* Download the client secret file and rename it to `credentials.json`.**
+
+**5. \*\*Publish App (Optional but Recommended):\*\* If your app status is "Testing," your token will expire every 7 days. Go to the OAuth consent screen and click "Publish App" to make the authorization permanent for your account.**
+
+
+
+**\*\*فارسی:\*\***
+
+**1. \*\*فعال‌سازی API:\*\* به کنسول گوگل کلاود بروید، یک پروژه بسازید و Google Drive API را فعال کنید.**
+
+**2. \*\*تنظیم صفحه رضایت:\*\* به بخش "APIs \& Services" > "OAuth consent screen" بروید. نام برنامه و ایمیل پشتیبانی را وارد کنید (بخش Branding).**
+
+**3. \*\*ساخت اعتبارنامه:\*\* به بخش "Credentials" > "Create Credentials" > OAuth client ID بروید. نوع برنامه را \*\*Desktop App\*\* انتخاب کنید.**
+
+**4. \*\*دانلود فایل:\*\* فایل کلاینت سکرت را دانلود کرده و نام آن را به `credentials.json` تغییر دهید.**
+
+**5. \*\*انتشار برنامه (پیشنهادی):\*\* اگر وضعیت برنامه روی "Testing" باشد، توکن شما هر ۷ روز منقضی می‌شود. در صفحه OAuth consent screen بر روی "Publish App" کلیک کنید تا دسترسی برای اکانت شما دائمی شود.**
+
+
+
+**### 2. Build Binaries / ساخت فایل‌های اجرایی**
+
+
+
+**```bash**
+
+**go build -o bin/client ./cmd/client/main.go**
+
+**go build -o bin/server ./cmd/server/main.go**
+
+**```**
+
+
+
+**### 3. Configuration / پیکربندی**
+
+
+
+**Create your `config.json` based on the provided examples. (Zephyr uses intelligent batching, so you can safely use lower refresh rates than previous iterations).**
+
+
+
+**\*\*Client Side (`client\_config.json`):\*\***
+
+**```json**
+
+**{**
+
+  **"listen\_addr": "127.0.0.1:1080",**
+
+  **"storage\_type": "google",**
+
+  **"google\_folder\_id": "",**
+
+  **"refresh\_rate\_ms": 100,**
+
+  **"flush\_rate\_ms": 50,**
+
+  **"transport": {**
+
+    **"TargetIP": "216.239.38.120:443",**
+
+    **"SNI": "google.com",**
+
+    **"HostHeader": "www.googleapis.com"**
+
+  **}**
+
+**}**
+
+**```**
+
+
+
+**\*\*Server Side (`server\_config.json`):\*\***
+
+**```json**
+
+**{**
+
+  **"storage\_type": "google",**
+
+  **"google\_folder\_id": "YOUR\_FOLDER\_ID\_GENERATED\_BY\_CLIENT",**
+
+  **"refresh\_rate\_ms": 100,**
+
+  **"flush\_rate\_ms": 50**
+
+**}**
+
+**```**
+
+
+
+**---**
+
+
+
+**## 📊 Performance \& Quotas / عملکرد و سهمیه‌ها**
+
+
+
+**\*\*English:\*\***
+
+**\*\*Important:\*\* Google Drive has strict API rate limits (quotas).**
+
+**\* While Zephyr uses multiplexing to drastically reduce API calls, using extremely low values (e.g., `refresh\_rate\_ms: 50`) might consume your API quota over long periods.**
+
+**\* To avoid connections being limited or blocked, it is recommended to keep these values around `100ms` - `200ms`.**
+
+**\* For heavy usage or multiple concurrent users, you should set these to `300ms` or higher.**
+
+
+
+**\*\*فارسی:\*\***
+
+**\*\*نکته مهم:\*\* گوگل درایو محدودیت‌های سفت‌وسختی برای تعداد درخواست‌های API (Quota) دارد.**
+
+**\* اگرچه Zephyr با استفاده از تجمیع درخواست‌ها (Multiplexing) تعداد فراخوانی‌های API را به شدت کاهش داده است، اما استفاده از مقادیر بسیار پایین (مثلاً `50ms`) در طولانی‌مدت ممکن است سهمیه شما را تمام کند.**
+
+**\* برای جلوگیری از محدود شدن یا قطع شدن اتصال، توصیه می‌شود این مقادیر را در بازه `100ms` تا `200ms` نگه دارید.**
+
+**\* برای استفاده‌های سنگین یا زمانی که چندین کاربر به صورت هم‌زمان متصل هستند، بهتر است این مقادیر را روی `300ms` یا بالاتر تنظیم کنید.**
+
+
+
+**---**
+
+
+
+**## 🔐 Usage \& Authentication / نحوه استفاده و احراز هویت**
+
+
+
+**### 1. First-Time Authentication / احراز هویت اولیه**
+
+**Zephyr uses OAuth2 "3-legged" flow. You only need to do this once on your local machine:**
+
+
+
+**\*\*English:\*\***
+
+**1. Run the client: `./bin/client -c client\_config.json -gc credentials.json`**
+
+**2. A link will appear in your terminal. Copy and open it in your web browser.**
+
+**3. Log in to your Google account and grant permissions.**
+
+**4. You will be redirected to an address starting with `http://localhost` (it's okay if the page doesn't load/says unable to connect).**
+
+**5. Copy the \*\*entire URL\*\* from your browser's address bar and paste it back into your terminal.**
+
+**6. The program will create a `.token` file next to your `credentials.json`. Authorization is now complete.**
+
+
+
+**\*\*فارسی:\*\***
+
+**1. کلاینت را اجرا کنید: `./bin/client -c client\_config.json -gc credentials.json`**
+
+**2. یک لینک در ترمینال ظاهر می‌شود. آن را کپی کرده و در مرورگر خود باز کنید.**
+
+**3. وارد اکانت گوگل خود شوید و دسترسی‌های لازم را تایید کنید.**
+
+**4. شما به آدرسی که با `http://localhost` شروع می‌شود هدایت می‌شوید (اشکالی ندارد اگر مرورگر خطای عدم اتصال بدهد).**
+
+**5. \*\*کل آدرس URL\*\* را از نوار آدرس مرورگر کپی کرده و در ترمینال پیست کنید.**
+
+**6. برنامه یک فایل با پسوند `.token` در کنار `credentials.json` شما می‌سازد. احراز هویت تمام شد.**
+
+
+
+**### 2. Deploying to Server / استقرار در سرور**
+
+**Once you have the `.token` file, you don't need to log in again.**
+
+
+
+**\*\*English:\*\* To run the server on a remote upstream machine:**
+
+**1. Copy `credentials.json` \*\*AND\*\* the `.token` file to the server.**
+
+**2. \*\*Crucial:\*\* Make sure your `server\_config.json` has the \*\*SAME\*\* `google\_folder\_id` that the client just created and saved in your local config.**
+
+**3. Run: `./bin/server -c server\_config.json -gc credentials.json`**
+
+**4. The server will automatically use the existing token and start immediately.**
+
+
+
+**\*\*فارسی:\*\* پس از دریافت فایل `.token` دیگر نیازی به لاگین مجدد نیست. برای اجرای سرور در یک ماشین دور (Upstream):**
+
+**1. فایل `credentials.json` \*\*و\*\* فایل `.token` ساخته شده را به سرور منتقل کنید.**
+
+**2. \*\*خیلی مهم:\*\* مطمئن شوید که در فایل `server\_config.json` مقدار `google\_folder\_id` دقیقاً همان مقداری باشد که کلاینت به طور خودکار ساخته و در فایل کانفیگ محلی شما ذخیره کرده است.**
+
+**3. اجرا کنید: `./bin/server -c server\_config.json -gc credentials.json`**
+
+**4. سرور به صورت خودکار از توکن موجود استفاده کرده و بلافاصله شروع به کار می‌کند.**
+
