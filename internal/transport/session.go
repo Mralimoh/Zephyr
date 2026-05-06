@@ -129,6 +129,14 @@ func (s *Session) ProcessRx(env *Envelope) {
 			}
 		}
 	} else if env.Seq > s.rxSeq {
+		if env.Seq-s.rxSeq > 1024 {
+			s.rxClosed = true
+			s.closed = true
+			s.cancel()
+			s.rxCond.Broadcast()
+			s.txCond.Broadcast()
+			return
+		}
 		s.rxQueue[env.Seq] = env
 	}
 }

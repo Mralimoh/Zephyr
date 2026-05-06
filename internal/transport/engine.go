@@ -8,15 +8,20 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"bytes"
 	"io"
 
-	"Zephyr/internal/storage"
 	"github.com/klauspost/compress/zstd"
 )
 
+type Datastore interface {
+	Upload(ctx context.Context, filename string, data io.Reader) error
+	ListQuery(ctx context.Context, prefix string) ([]string, error)
+	Download(ctx context.Context, filename string) (io.ReadCloser, error)
+	Delete(ctx context.Context, filename string) error
+}
+
 type Engine struct {
-	backend storage.Backend
+	store   Datastore
 	myDir   Direction
 	peerDir Direction
 	id      string
@@ -38,9 +43,6 @@ type Engine struct {
 	processed   map[string]bool
 	processedMu sync.Mutex
 
-	bufferPool sync.Pool
-	bytePool   sync.Pool
-
 	lastTxTime time.Time
 
 	fileRetries   map[string]int
@@ -50,9 +52,9 @@ type Engine struct {
 	flushSignal    chan struct{}
 }
 
-func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine {
+func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 	e := &Engine{
-		backend:        backend,
+		store:          store,
 		id:             clientID,
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
@@ -65,17 +67,11 @@ func NewEngine(backend storage.Backend, isClient bool, clientID string) *Engine 
 		flushSignal:    make(chan struct{}, 1),
 	}
 
-	e.bufferPool.New = func() any {
-		return new(bytes.Buffer)
-	}
-
-	e.bytePool.New = func() any {
-		b := make([]byte, FlushThresholdBytes*2)
-		return &b
-	}
-
 	e.zstdWriterPool.New = func() any {
-		zw, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		zw, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err != nil {
+			log.Fatalf("Critical: failed to initialize zstd writer: %v", err)
+		}
 		return zw
 	}
 
@@ -115,7 +111,7 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 	prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 
 	for _, pref := range prefixes {
-		files, err := e.backend.ListQuery(ctx, pref)
+		files, err := e.store.ListQuery(ctx, pref)
 		if err != nil {
 			continue
 		}
@@ -213,7 +209,12 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
-		e.txSem <- struct{}{}
+		
+		select {
+		case e.txSem <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
 
 		go func(fname string, envelopes []Envelope) {
 			defer func() { <-e.txSem }()
@@ -223,22 +224,29 @@ func (e *Engine) flushAll(ctx context.Context) {
 			go func() {
 				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
 				zw.Reset(pw)
+				var encErr error
+				
 				for _, env := range envelopes {
-					env.Encode(zw)
+					if err := env.Encode(zw); err != nil {
+						encErr = err
+						break
+					}
 				}
+				
 				zw.Close()
 				e.zstdWriterPool.Put(zw)
-				pw.Close()
+				pw.CloseWithError(encErr)
 			}()
 
-			err := e.backend.Upload(ctx, fname, pr)
+			err := e.store.Upload(ctx, fname, pr)
 			if err == nil {
 				e.lastTxTime = time.Now()
+			} else {
+				log.Printf("[Engine] Error: failed to upload mux %s: %v", fname, err)
 			}
 			pr.Close()
 		}(filename, mux)
 	}
-
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
@@ -257,7 +265,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				prefix += e.id + "-mux-"
 			}
 
-			files, err := e.backend.ListQuery(ctx, prefix)
+			files, err := e.store.ListQuery(ctx, prefix)
 			if err != nil {
 				time.Sleep(e.pollTicker)
 				continue
@@ -311,11 +319,17 @@ func (e *Engine) pollLoop(ctx context.Context) {
 }
 
 func (e *Engine) processFile(ctx context.Context, fname string) {
-	e.rxSem <- struct{}{}
+	select {
+	case e.rxSem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	defer func() { <-e.rxSem }()
 
-	rc, err := e.backend.Download(ctx, fname)
+	rc, err := e.store.Download(ctx, fname)
 	if err != nil {
+		log.Printf("[Engine] Warning: download failed for %s (Retrying): %v", fname, err)
+		
 		e.fileRetriesMu.Lock()
 		e.fileRetries[fname]++
 		retryCount := e.fileRetries[fname]
@@ -326,7 +340,8 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 			delete(e.processed, fname)
 			e.processedMu.Unlock()
 		} else {
-			e.backend.Delete(ctx, fname)
+			log.Printf("[Engine] Error: giving up on %s after 3 attempts, deleting.", fname)
+			e.store.Delete(ctx, fname)
 			e.fileRetriesMu.Lock()
 			delete(e.fileRetries, fname)
 			e.fileRetriesMu.Unlock()
@@ -341,6 +356,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 	zr, err := zstd.NewReader(rc)
 	if err != nil {
+		log.Printf("[Engine] Error: failed to create zstd reader for %s: %v", fname, err)
 		return
 	}
 	defer zr.Close()
@@ -354,6 +370,9 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	for {
 		var env Envelope
 		if err := env.Decode(zr); err != nil {
+			if err != io.EOF && err != io.ErrUnexpectedEOF {
+				log.Printf("[Engine] Warning: decode error in file %s: %v", fname, err)
+			}
 			break
 		}
 
@@ -381,7 +400,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 		}
 	}
 
-	e.backend.Delete(ctx, fname)
+	e.store.Delete(ctx, fname)
 }
 
 func (e *Engine) RemoveSession(id string) {
@@ -417,7 +436,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
-			files, err := e.backend.ListQuery(ctx, pref)
+			files, err := e.store.ListQuery(ctx, pref)
 			if err != nil {
 				continue
 			}
@@ -435,7 +454,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 				}
 
 				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
-					e.backend.Delete(ctx, f)
+					e.store.Delete(ctx, f)
 				}
 			}
 		}

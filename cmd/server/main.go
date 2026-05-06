@@ -16,13 +16,20 @@ import (
 	"Zephyr/internal/transport"
 )
 
+type StorageClient interface {
+	Login(ctx context.Context) error
+	FindFolder(ctx context.Context, name string) (string, error)
+	CreateFolder(ctx context.Context, name string) (string, error)
+	transport.Datastore
+}
+
 func main() {
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
 	flag.Parse()
 
-log.Println("Starting Zephyr Server...")
+	log.Println("Starting Zephyr Server...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -31,7 +38,7 @@ log.Println("Starting Zephyr Server...")
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	var backend storage.Backend
+	var backend StorageClient
 	if appCfg.StorageType == "google" {
 		customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
 		backend = storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)

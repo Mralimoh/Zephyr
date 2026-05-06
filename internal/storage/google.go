@@ -210,43 +210,68 @@ func (b *GoogleBackend) getValidToken(ctx context.Context) (string, error) {
 func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Reader) error {
 	tok, err := b.getValidToken(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("getting valid token for upload: %w", err)
 	}
 
 	meta := map[string]interface{}{"name": filename}
 	if b.folderID != "" {
 		meta["parents"] = []string{b.folderID}
 	}
-	metaBytes, _ := json.Marshal(meta)
+	
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshaling upload metadata: %w", err)
+	}
 
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
 
 	go func() {
-		defer pw.Close()
-		defer mw.Close()
+		var goroutineErr error
+		defer func() {
+			mw.Close()
+			pw.CloseWithError(goroutineErr)
+		}()
 
 		h := make(textproto.MIMEHeader)
 		h.Set("Content-Type", "application/json; charset=UTF-8")
-		part1, _ := mw.CreatePart(h)
-		part1.Write(metaBytes)
+		part1, err := mw.CreatePart(h)
+		if err != nil {
+			goroutineErr = fmt.Errorf("creating metadata part: %w", err)
+			return
+		}
+		
+		if _, err := part1.Write(metaBytes); err != nil {
+			goroutineErr = fmt.Errorf("writing metadata part: %w", err)
+			return
+		}
 
 		h = make(textproto.MIMEHeader)
 		h.Set("Content-Type", "application/octet-stream")
-		part2, _ := mw.CreatePart(h)
-		io.Copy(part2, data)
+		part2, err := mw.CreatePart(h)
+		if err != nil {
+			goroutineErr = fmt.Errorf("creating data part: %w", err)
+			return
+		}
+		
+		if _, err := io.Copy(part2, data); err != nil {
+			goroutineErr = fmt.Errorf("copying data to multipart: %w", err)
+			return
+		}
 	}()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart", pr)
+	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating http request: %w", err)
 	}
+	
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("executing http request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -254,8 +279,12 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		return nil
 	}
 	
-	body, _ := io.ReadAll(resp.Body)
-	return fmt.Errorf("upload error %d: %s", resp.StatusCode, string(body))
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		body = []byte(fmt.Sprintf("<failed to read error body: %v>", err))
+	}
+	
+	return fmt.Errorf("upload rejected with status %d: %s", resp.StatusCode, string(body))
 }
 
 func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string, error) {

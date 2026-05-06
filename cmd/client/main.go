@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"sync"
 	"encoding/binary"
+	"fmt"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -29,13 +30,20 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
+type StorageClient interface {
+	Login(ctx context.Context) error
+	FindFolder(ctx context.Context, name string) (string, error)
+	CreateFolder(ctx context.Context, name string) (string, error)
+	transport.Datastore
+}
+
 func main() {
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
 	flag.Parse()
 
-log.Println("Starting Zephyr Client...")
+	log.Println("Starting Zephyr Client...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -44,7 +52,7 @@ log.Println("Starting Zephyr Client...")
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	var backend storage.Backend
+	var backend StorageClient
 	if appCfg.StorageType == "google" {
 		customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
 		backend = storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)
@@ -105,7 +113,11 @@ log.Println("Starting Zephyr Client...")
 
 	server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
-			host, port, _ := net.SplitHostPort(addr)
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				log.Printf("[SOCKS5] Error: invalid target address format '%s': %v", addr, err)
+				return nil, fmt.Errorf("invalid address format: %w", err)
+			}
 			
 			realHost, isFake := fdns.GetHostname(host)
 			targetAddr := addr

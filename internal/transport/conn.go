@@ -22,15 +22,23 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 	v.session.mu.Lock()
 	defer v.session.mu.Unlock()
 
-	for len(v.session.rxBuf) == 0 && !v.session.closed && !v.session.rxClosed {
+	for len(v.session.rxBuf) == 0 {
+		if v.session.closed || v.session.rxClosed {
+			return 0, io.EOF
+		}
 		v.session.rxCond.Wait()
 	}
 
 	if len(v.session.rxBuf) > 0 {
 		n = copy(b, v.session.rxBuf)
+		remaining := len(v.session.rxBuf) - n
 		
-		remaining := copy(v.session.rxBuf, v.session.rxBuf[n:])
-		v.session.rxBuf = v.session.rxBuf[:remaining]
+		if remaining == 0 {
+			v.session.rxBuf = make([]byte, 0, 32*1024)
+		} else {
+			copy(v.session.rxBuf, v.session.rxBuf[n:])
+			v.session.rxBuf = v.session.rxBuf[:remaining]
+		}
 		
 		v.session.rxCond.Broadcast()
 		return n, nil
@@ -40,6 +48,13 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 }
 
 func (v *VirtualConn) Write(b []byte) (n int, err error) {
+	v.session.mu.Lock()
+	if v.session.closed {
+		v.session.mu.Unlock()
+		return 0, io.EOF
+	}
+	v.session.mu.Unlock()
+
 	if len(b) > 0 {
 		v.session.EnqueueTx(b)
 	}
