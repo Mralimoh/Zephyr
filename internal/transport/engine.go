@@ -267,7 +267,12 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 			files, err := e.store.ListQuery(ctx, prefix)
 			if err != nil {
-				time.Sleep(e.pollTicker)
+				log.Printf("[Engine] List error in poll: %v", err)
+				select {
+				case <-time.After(e.pollTicker):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
@@ -297,22 +302,29 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				}
 			}
 
-			e.sessionMu.RLock()
-			activeSessions := len(e.sessions)
-			e.sessionMu.RUnlock()
-
 			if foundNewData {
 				continue
 			}
 
+			e.sessionMu.RLock()
+			activeSessions := len(e.sessions)
+			e.sessionMu.RUnlock()
+
+			var sleepDur time.Duration
 			if activeSessions > 0 {
 				if isAggressiveMode {
-					time.Sleep(20 * time.Millisecond)
+					sleepDur = 20 * time.Millisecond
 				} else {
-					time.Sleep(50 * time.Millisecond)
+					sleepDur = 50 * time.Millisecond
 				}
 			} else {
-				time.Sleep(5 * time.Second)
+				sleepDur = 5 * time.Second
+			}
+
+			select {
+			case <-time.After(sleepDur):
+			case <-ctx.Done():
+				return
 			}
 		}
 	}
@@ -436,12 +448,24 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			files, err := e.store.ListQuery(ctx, pref)
 			if err != nil {
 				continue
 			}
 
 			for _, f := range files {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
 				if len(parts) < 4 {
 					continue 
@@ -454,7 +478,9 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 				}
 
 				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
-					e.store.Delete(ctx, f)
+					if err := e.store.Delete(ctx, f); err != nil {
+						log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", f, err)
+					}
 				}
 			}
 		}
