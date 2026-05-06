@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+    "Zephyr/internal/httpclient"
 )
 
 type oauthClientJSON struct {
@@ -32,7 +34,7 @@ type tokenCache struct {
 }
 
 type GoogleBackend struct {
-	httpClient *http.Client
+	httpClient httpclient.HTTPClient
 	saPath     string
 	folderID   string
 
@@ -50,7 +52,7 @@ type GoogleBackend struct {
 	fileIdsMu sync.RWMutex
 }
 
-func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
+func NewGoogleBackend(client httpclient.HTTPClient, saPath, folderID string) *GoogleBackend {
 	return &GoogleBackend{
 		httpClient: client,
 		saPath:     saPath,
