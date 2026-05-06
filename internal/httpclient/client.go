@@ -1,71 +1,82 @@
 package httpclient
 
 import (
-	"context"
-	"crypto/tls"
-	"net"
 	"net/http"
-	"time"
+
+	fhttp "github.com/bogdanfinn/fhttp"
+	tlsclient "github.com/bogdanfinn/tls-client"
+	"github.com/bogdanfinn/tls-client/profiles"
 )
 
 type TransportConfig struct {
-	TargetIP string
-
-	SNI string
-
-	HostHeader string
-
+	TargetIP           string
+	SNI                string
+	HostHeader         string
 	InsecureSkipVerify bool
 }
 
-type hostRewriteTransport struct {
-	Transport  http.RoundTripper
-	HostHeader string
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
 }
 
-func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.HostHeader != "" {
-		req.Host = t.HostHeader
-	}
-	return t.Transport.RoundTrip(req)
+type clientWrapper struct {
+	client tlsclient.HttpClient
 }
 
-func NewCustomClient(cfg TransportConfig) *http.Client {
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 60 * time.Second,
+func (w *clientWrapper) Do(req *http.Request) (*http.Response, error) {
+	fReq, err := fhttp.NewRequest(req.Method, req.URL.String(), req.Body)
+	if err != nil {
+		return nil, err
 	}
-
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if cfg.TargetIP != "" {
-				return dialer.DialContext(ctx, "tcp", cfg.TargetIP)
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-		TLSClientConfig: &tls.Config{
-			ServerName:         cfg.SNI,
-			InsecureSkipVerify: cfg.InsecureSkipVerify,
-		},
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       180 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DisableCompression:    false,
-	}
-
-	var rt http.RoundTripper = transport
-	if cfg.HostHeader != "" {
-		rt = &hostRewriteTransport{
-			Transport:  transport,
-			HostHeader: cfg.HostHeader,
+	fReq.Header = make(fhttp.Header)
+	for k, vv := range req.Header {
+		for _, v := range vv {
+			fReq.Header.Add(k, v)
 		}
 	}
 
-	return &http.Client{
-		Transport: rt,
-		Timeout:   60 * time.Second,
+	fResp, err := w.client.Do(fReq)
+	if err != nil {
+		return nil, err
 	}
+
+	resp := &http.Response{
+		Status:     fResp.Status,
+		StatusCode: fResp.StatusCode,
+		Proto:      fResp.Proto,
+		ProtoMajor: fResp.ProtoMajor,
+		ProtoMinor: fResp.ProtoMinor,
+		Header:     make(http.Header),
+		Body:       fResp.Body,
+		ContentLength: fResp.ContentLength,
+	}
+
+	for k, vv := range fResp.Header {
+		for _, v := range vv {
+			resp.Header.Add(k, v)
+		}
+	}
+
+	return resp, nil
+}
+
+func NewCustomClient(cfg TransportConfig) HTTPClient {
+	options := []tlsclient.HttpClientOption{
+		tlsclient.WithClientProfile(profiles.Chrome_120),
+		tlsclient.WithNotFollowRedirects(),
+	}
+
+	if cfg.InsecureSkipVerify {
+		options = append(options, tlsclient.WithInsecureSkipVerify())
+	}
+	if cfg.SNI != "" {
+		options = append(options, tlsclient.WithServerNameOverwrite(cfg.SNI))
+	}
+
+	client, err := tlsclient.NewHttpClient(tlsclient.NewNoopLogger(), options...)
+	if err != nil {
+		return &http.Client{}
+	}
+
+	return &clientWrapper{client: client}
 }

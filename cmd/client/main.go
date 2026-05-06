@@ -171,6 +171,12 @@ func (f *fakeDNS) GetIP(hostname string) net.IP {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if len(f.table) > 5000 {
+		f.table = make(map[string]string)
+		f.revTable = make(map[string]string)
+		f.nextIP = 0x0A000001
+	}
+
 	if ipStr, ok := f.revTable[hostname]; ok {
 		return net.ParseIP(ipStr)
 	}
@@ -181,6 +187,7 @@ func (f *fakeDNS) GetIP(hostname string) net.IP {
 
 	f.table[ipStr] = hostname
 	f.revTable[hostname] = ipStr
+	
 	f.nextIP++
 	if f.nextIP > 0x0AFFFFFF {
 		f.nextIP = 0x0A000001
