@@ -84,15 +84,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 	return e
 }
 
-func (e *Engine) SetRefreshRate(ms int) {
-	if ms > 0 {
-		e.pollTicker = time.Duration(ms) * time.Millisecond
-		if e.flushTicker == 300*time.Millisecond {
-			e.flushTicker = time.Duration(ms) * time.Millisecond
-		}
-	}
-}
-
 func (e *Engine) SetPollRate(ms int) {
 	if ms > 0 {
 		e.pollTicker = time.Duration(ms) * time.Millisecond
