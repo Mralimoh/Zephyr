@@ -20,14 +20,42 @@ type Datastore interface {
 	Delete(ctx context.Context, filename string) error
 }
 
+type opKind int
+
+const (
+	opAdd opKind = iota
+	opRemove
+	opList
+	opGet
+	opCheckFile
+	opMarkFile
+	opUnmarkFile
+	opGetRetry
+	opIncRetry
+	opResetFiles
+)
+
+type engineOp struct {
+	kind     opKind
+	session  *Session
+	sid      string
+	filename string
+	resp     chan *Session
+	respList chan []*Session
+	respBool chan bool
+	respInt  chan int
+}
+
 type Engine struct {
 	store   Datastore
 	myDir   Direction
 	peerDir Direction
 	id      string
 
-	sessions  map[string]*Session
-	sessionMu sync.RWMutex
+	sessions    map[string]*Session
+	processed   map[string]bool
+	fileRetries map[string]int
+	managerChan chan engineOp
 
 	closedSessions   map[string]time.Time
 	closedSessionsMu sync.Mutex
@@ -40,13 +68,7 @@ type Engine struct {
 	txSem chan struct{}
 	rxSem chan struct{}
 
-	processed   map[string]bool
-	processedMu sync.Mutex
-
 	lastTxTime time.Time
-
-	fileRetries   map[string]int
-	fileRetriesMu sync.Mutex
 
 	zstdWriterPool sync.Pool
 }
@@ -56,13 +78,14 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		store:          store,
 		id:             clientID,
 		sessions:       make(map[string]*Session),
-		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
+		fileRetries:    make(map[string]int),
+		managerChan:    make(chan engineOp, 256),
+		closedSessions: make(map[string]time.Time),
 		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
-		fileRetries:    make(map[string]int),
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -105,26 +128,25 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 			continue
 		}
 
-		e.processedMu.Lock()
 		for _, f := range files {
 			e.processed[f] = true
 		}
-		e.processedMu.Unlock()
 	}
 }
 
 func (e *Engine) Start(ctx context.Context) {
 	e.makeBaseline(ctx)
+	go e.runManager(ctx)
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
 	go e.cleanupLoop(ctx)
 }
 
 func (e *Engine) AddSession(s *Session) {
-	e.sessionMu.Lock()
-	defer e.sessionMu.Unlock()
-	e.sessions[s.ID] = s
-	log.Printf("Engine.AddSession: Added session %s (Total now: %d)", s.ID, len(e.sessions))
+	e.managerChan <- engineOp{
+		kind:    opAdd,
+		session: s,
+	}
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
@@ -142,12 +164,9 @@ func (e *Engine) flushLoop(ctx context.Context) {
 }
 
 func (e *Engine) flushAll(ctx context.Context) {
-	e.sessionMu.RLock()
-	sessions := make([]*Session, 0, len(e.sessions))
-	for _, s := range e.sessions {
-		sessions = append(sessions, s)
-	}
-	e.sessionMu.RUnlock()
+	resp := make(chan []*Session, 1)
+	e.managerChan <- engineOp{kind: opList, respList: resp}
+	sessions := <-resp
 
 	muxes := make(map[string][]Envelope)
 	var closedIDs []string
@@ -162,16 +181,10 @@ func (e *Engine) flushAll(ctx context.Context) {
 					closedIDs = append(closedIDs, s.ID)
 					continue
 				}
-				
 				cid := s.ClientID
-				if cid == "" && e.myDir == DirReq {
-					cid = e.id
-				}
+				if cid == "" && e.myDir == DirReq { cid = e.id }
 				muxes[cid] = append(muxes[cid], env)
-				
-				if env.Close {
-					closedIDs = append(closedIDs, s.ID)
-				}
+				if env.Close { closedIDs = append(closedIDs, s.ID) }
 			default:
 				collecting = false
 			}
@@ -179,10 +192,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 	}
 
 	for cid, envelopes := range muxes {
-		if len(envelopes) == 0 {
-			continue
-		}
-
+		if len(envelopes) == 0 { continue }
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
 		
 		select {
@@ -194,7 +204,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 		go func(fname string, envs []Envelope) {
 			defer func() { <-e.txSem }()
 			pr, pw := io.Pipe()
-
 			go func() {
 				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
 				zw.Reset(pw)
@@ -209,7 +218,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 				e.zstdWriterPool.Put(zw)
 				pw.CloseWithError(encErr)
 			}()
-
 			if err := e.store.Upload(ctx, fname, pr); err == nil {
 				e.lastTxTime = time.Now()
 			}
@@ -228,8 +236,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
-
 			prefix := string(e.peerDir) + "-"
 			if e.myDir == DirReq {
 				prefix += e.id + "-mux-"
@@ -237,7 +243,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 			files, err := e.store.ListQuery(ctx, prefix)
 			if err != nil {
-				log.Printf("[Engine] List error in poll: %v", err)
 				select {
 				case <-time.After(e.pollTicker):
 				case <-ctx.Done():
@@ -249,15 +254,15 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			foundNewData := false
 			if len(files) > 0 {
 				var newFiles []string
-				e.processedMu.Lock()
 				for _, f := range files {
-					if !e.processed[f] {
-						e.processed[f] = true
+					resCh := make(chan bool, 1)
+					e.managerChan <- engineOp{kind: opCheckFile, filename: f, respBool: resCh}
+					if isProcessed := <-resCh; !isProcessed {
+						e.managerChan <- engineOp{kind: opMarkFile, filename: f}
 						newFiles = append(newFiles, f)
 						foundNewData = true
 					}
 				}
-				e.processedMu.Unlock()
 
 				if len(newFiles) > 0 {
 					var wg sync.WaitGroup
@@ -276,23 +281,8 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				continue
 			}
 
-			e.sessionMu.RLock()
-			activeSessions := len(e.sessions)
-			e.sessionMu.RUnlock()
-
-			var sleepDur time.Duration
-			if activeSessions > 0 {
-				if isAggressiveMode {
-					sleepDur = 20 * time.Millisecond
-				} else {
-					sleepDur = 50 * time.Millisecond
-				}
-			} else {
-				sleepDur = 1 * time.Second
-			}
-
 			select {
-			case <-time.After(sleepDur):
+			case <-time.After(e.pollTicker):
 			case <-ctx.Done():
 				return
 			}
@@ -310,35 +300,22 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 
 	rc, err := e.store.Download(ctx, fname)
 	if err != nil {
-		log.Printf("[Engine] Warning: download failed for %s (Retrying): %v", fname, err)
-		
-		e.fileRetriesMu.Lock()
-		e.fileRetries[fname]++
-		retryCount := e.fileRetries[fname]
-		e.fileRetriesMu.Unlock()
+		e.managerChan <- engineOp{kind: opIncRetry, filename: fname}
+		retCh := make(chan int, 1)
+		e.managerChan <- engineOp{kind: opGetRetry, filename: fname, respInt: retCh}
+		retryCount := <-retCh
 
 		if retryCount < 3 {
-			e.processedMu.Lock()
-			delete(e.processed, fname)
-			e.processedMu.Unlock()
+			e.managerChan <- engineOp{kind: opUnmarkFile, filename: fname}
 		} else {
-			log.Printf("[Engine] Error: giving up on %s after 3 attempts, deleting.", fname)
 			e.store.Delete(ctx, fname)
-			e.fileRetriesMu.Lock()
-			delete(e.fileRetries, fname)
-			e.fileRetriesMu.Unlock()
 		}
 		return
 	}
 	defer rc.Close()
 
-	e.fileRetriesMu.Lock()
-	delete(e.fileRetries, fname)
-	e.fileRetriesMu.Unlock()
-
 	zr, err := zstd.NewReader(rc)
 	if err != nil {
-		log.Printf("[Engine] Error: failed to create zstd reader for %s: %v", fname, err)
 		return
 	}
 	defer zr.Close()
@@ -352,29 +329,18 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	for {
 		var env Envelope
 		if err := env.Decode(zr); err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF {
-				log.Printf("[Engine] Warning: decode error in file %s: %v", fname, err)
-			}
 			break
 		}
 
-		e.closedSessionsMu.Lock()
-		_, isClosed := e.closedSessions[env.SessionID]
-		e.closedSessionsMu.Unlock()
-		if isClosed {
-			continue
-		}
+		resp := make(chan *Session, 1)
+		e.managerChan <- engineOp{kind: opGet, sid: env.SessionID, resp: resp}
+		s := <-resp
 
-		e.sessionMu.Lock()
-		s, exists := e.sessions[env.SessionID]
-		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
+		if s == nil && e.myDir == DirRes && e.OnNewSession != nil {
 			s = NewSession(env.SessionID)
 			s.ClientID = fileClientID
-			e.sessions[env.SessionID] = s
-			e.sessionMu.Unlock()
+			e.AddSession(s)
 			e.OnNewSession(env.SessionID, env.TargetAddr, s)
-		} else {
-			e.sessionMu.Unlock()
 		}
 
 		if s != nil {
@@ -386,40 +352,28 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 }
 
 func (e *Engine) RemoveSession(id string) {
-	e.sessionMu.Lock()
-	s, exists := e.sessions[id]
-	delete(e.sessions, id)
-	e.sessionMu.Unlock()
-
-	if exists && s != nil {
-		s.cancel()
+	e.managerChan <- engineOp{
+		kind: opRemove,
+		sid:  id,
 	}
-
-	e.closedSessionsMu.Lock()
-	e.closedSessions[id] = time.Now()
-	e.closedSessionsMu.Unlock()
 }
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup := func() {
-		e.sessionMu.Lock()
-		for id, s := range e.sessions {
+		resp := make(chan []*Session, 1)
+		e.managerChan <- engineOp{kind: opList, respList: resp}
+		sessions := <-resp
+
+		for _, s := range sessions {
 			s.mu.Lock()
 			last := s.lastActivity
 			s.mu.Unlock()
-
 			if time.Since(last) > 60*time.Second {
-				delete(e.sessions, id)
-				s.cancel() 
+				e.RemoveSession(s.ID)
 			}
 		}
-		e.sessionMu.Unlock()
 
-		e.processedMu.Lock()
-		if len(e.processed) > 2000 {
-			e.processed = make(map[string]bool)
-		}
-		e.processedMu.Unlock()
+		e.managerChan <- engineOp{kind: opResetFiles}
 
 		e.closedSessionsMu.Lock()
 		for id, t := range e.closedSessions {
@@ -432,22 +386,13 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
 			files, err := e.store.ListQuery(ctx, pref)
-			if err != nil {
-				continue
-			}
-
+			if err != nil { continue }
 			for _, f := range files {
 				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
-				if len(parts) < 4 {
-					continue 
-				}
-
+				if len(parts) < 4 { continue }
 				nanoStr := parts[len(parts)-1]
 				nanos, err := strconv.ParseInt(nanoStr, 10, 64)
-				if err != nil {
-					continue
-				}
-
+				if err != nil { continue }
 				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
 					e.store.Delete(ctx, f)
 				}
@@ -456,16 +401,55 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 	}
 
 	doCleanup()
-
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			doCleanup()
+		}
+	}
+}
+
+func (e *Engine) runManager(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case op := <-e.managerChan:
+			switch op.kind {
+			case opAdd:
+				e.sessions[op.session.ID] = op.session
+			case opRemove:
+				if s, ok := e.sessions[op.sid]; ok {
+					delete(e.sessions, op.sid)
+					s.cancel()
+				}
+			case opList:
+				list := make([]*Session, 0, len(e.sessions))
+				for _, s := range e.sessions {
+					list = append(list, s)
+				}
+				op.respList <- list
+			case opGet:
+				op.resp <- e.sessions[op.sid]
+			case opCheckFile:
+				op.respBool <- e.processed[op.filename]
+			case opMarkFile:
+				e.processed[op.filename] = true
+				delete(e.fileRetries, op.filename)
+			case opUnmarkFile:
+				delete(e.processed, op.filename)
+			case opGetRetry:
+				op.respInt <- e.fileRetries[op.filename]
+			case opIncRetry:
+				e.fileRetries[op.filename]++
+			case opResetFiles:
+				e.processed = make(map[string]bool)
+				e.fileRetries = make(map[string]int)
+			}
 		}
 	}
 }
