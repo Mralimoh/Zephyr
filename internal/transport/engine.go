@@ -49,7 +49,6 @@ type Engine struct {
 	fileRetriesMu sync.Mutex
 
 	zstdWriterPool sync.Pool
-	flushSignal    chan struct{}
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
@@ -64,7 +63,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
 		fileRetries:    make(map[string]int),
-		flushSignal:    make(chan struct{}, 1),
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -126,20 +124,9 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 
 func (e *Engine) Start(ctx context.Context) {
 	e.makeBaseline(ctx)
-
-	go func() {
-		_, _ = e.store.ListQuery(ctx, "warmup-")
-	}()
-
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
 	go e.cleanupLoop(ctx)
-}
-
-func (e *Engine) GetSession(id string) *Session {
-	e.sessionMu.RLock()
-	defer e.sessionMu.RUnlock()
-	return e.sessions[id]
 }
 
 func (e *Engine) AddSession(s *Session) {

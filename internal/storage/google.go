@@ -22,7 +22,6 @@ type oauthClientJSON struct {
 		ClientID     string   `json:"client_id"`
 		ClientSecret string   `json:"client_secret"`
 		AuthURI      string   `json:"auth_uri"`
-		TokenURI     string   `json:"token_uri"`
 		RedirectURIs []string `json:"redirect_uris"`
 	} `json:"installed"`
 }

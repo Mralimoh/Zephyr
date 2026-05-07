@@ -79,13 +79,6 @@ func (s *Session) EnqueueTx(data []byte) {
 	s.lastActivity = time.Now()
 }
 
-func (s *Session) ClearTx() {
-	s.mu.Lock()
-	s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
-	s.txCond.Broadcast()
-	s.mu.Unlock()
-}
-
 func (s *Session) ProcessRx(env *Envelope) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
