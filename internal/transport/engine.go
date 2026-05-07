@@ -402,6 +402,19 @@ func (e *Engine) RemoveSession(id string) {
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup := func() {
+		e.sessionMu.Lock()
+		for id, s := range e.sessions {
+			s.mu.Lock()
+			last := s.lastActivity
+			s.mu.Unlock()
+
+			if time.Since(last) > 60*time.Second {
+				delete(e.sessions, id)
+				s.cancel() 
+			}
+		}
+		e.sessionMu.Unlock()
+
 		e.processedMu.Lock()
 		if len(e.processed) > 2000 {
 			e.processed = make(map[string]bool)
@@ -418,24 +431,12 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
 			files, err := e.store.ListQuery(ctx, pref)
 			if err != nil {
 				continue
 			}
 
 			for _, f := range files {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
 				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
 				if len(parts) < 4 {
 					continue 
@@ -448,9 +449,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 				}
 
 				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
-					if err := e.store.Delete(ctx, f); err != nil {
-						log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", f, err)
-					}
+					e.store.Delete(ctx, f)
 				}
 			}
 		}
