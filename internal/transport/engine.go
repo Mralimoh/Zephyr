@@ -127,6 +127,10 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 func (e *Engine) Start(ctx context.Context) {
 	e.makeBaseline(ctx)
 
+	go func() {
+		_, _ = e.store.ListQuery(ctx, "warmup-")
+	}()
+
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
 	go e.cleanupLoop(ctx)
@@ -318,7 +322,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 					sleepDur = 50 * time.Millisecond
 				}
 			} else {
-				sleepDur = 5 * time.Second
+				sleepDur = 1 * time.Second
 			}
 
 			select {

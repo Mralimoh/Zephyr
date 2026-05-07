@@ -123,7 +123,6 @@ func main() {
 			targetAddr := addr
 			if isFake {
 				targetAddr = net.JoinHostPort(realHost, port)
-				log.Printf("[Dial] Un-faking: %s -> %s", host, realHost)
 			}
 
 			sessionID := generateSessionID()[:16]
@@ -209,6 +208,6 @@ type rawResolver struct {
 
 func (r rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
 	fakeIP := r.fdns.GetIP(name)
-	log.Printf("[DNS] Fake-IP: %s -> %s", name, fakeIP.String())
+	log.Printf("[DNS] %s -> %s", name, fakeIP)
 	return ctx, fakeIP, nil
 }
