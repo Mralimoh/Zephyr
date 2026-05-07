@@ -61,8 +61,8 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		processed:      make(map[string]bool),
 		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
-		txSem:          make(chan struct{}, 32),
-		rxSem:          make(chan struct{}, 24),
+		txSem:          make(chan struct{}, 16),
+		rxSem:          make(chan struct{}, 32),
 		fileRetries:    make(map[string]int),
 		flushSignal:    make(chan struct{}, 1),
 	}
