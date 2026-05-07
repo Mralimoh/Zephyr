@@ -142,54 +142,47 @@ func (e *Engine) flushLoop(ctx context.Context) {
 }
 
 func (e *Engine) flushAll(ctx context.Context) {
-	e.sessionMu.Lock()
+	e.sessionMu.RLock()
 	sessions := make([]*Session, 0, len(e.sessions))
 	for _, s := range e.sessions {
 		sessions = append(sessions, s)
 	}
-	e.sessionMu.Unlock()
+	e.sessionMu.RUnlock()
 
 	muxes := make(map[string][]Envelope)
 	var closedIDs []string
 
 	for _, s := range sessions {
-		s.mu.Lock()
-		if time.Since(s.lastActivity) > 60*time.Second {
-			s.closed = true
+		collecting := true
+		for collecting {
+			select {
+			case env, ok := <-s.txOut:
+				if !ok {
+					collecting = false
+					closedIDs = append(closedIDs, s.ID)
+					continue
+				}
+				
+				cid := s.ClientID
+				if cid == "" && e.myDir == DirReq {
+					cid = e.id
+				}
+				muxes[cid] = append(muxes[cid], env)
+				
+				if env.Close {
+					closedIDs = append(closedIDs, s.ID)
+				}
+			default:
+				collecting = false
+			}
 		}
-		
-		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
-		              len(s.txBuf) >= FlushThresholdBytes || 
-		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= e.flushTicker)
+	}
 
-		if !shouldSend {
-			s.mu.Unlock()
+	for cid, envelopes := range muxes {
+		if len(envelopes) == 0 {
 			continue
 		}
 
-		env := Envelope{
-			SessionID:  s.ID,
-			Seq:        s.txSeq,
-			Payload:    s.txBuf,
-			Close:      s.closed,
-			TargetAddr: s.TargetAddr,
-		}
-		
-		if s.closed {
-			closedIDs = append(closedIDs, s.ID)
-		}
-
-		cid := s.ClientID
-		if cid == "" && e.myDir == DirReq { cid = e.id }
-		muxes[cid] = append(muxes[cid], env)
-
-		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
-		s.txSeq++
-		s.txCond.Broadcast()
-		s.mu.Unlock()
-	}
-
-	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
 		
 		select {
@@ -198,37 +191,32 @@ func (e *Engine) flushAll(ctx context.Context) {
 			return
 		}
 
-		go func(fname string, envelopes []Envelope) {
+		go func(fname string, envs []Envelope) {
 			defer func() { <-e.txSem }()
-
 			pr, pw := io.Pipe()
 
 			go func() {
 				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
 				zw.Reset(pw)
 				var encErr error
-				
-				for _, env := range envelopes {
+				for _, env := range envs {
 					if err := env.Encode(zw); err != nil {
 						encErr = err
 						break
 					}
 				}
-				
 				zw.Close()
 				e.zstdWriterPool.Put(zw)
 				pw.CloseWithError(encErr)
 			}()
 
-			err := e.store.Upload(ctx, fname, pr)
-			if err == nil {
+			if err := e.store.Upload(ctx, fname, pr); err == nil {
 				e.lastTxTime = time.Now()
-			} else {
-				log.Printf("[Engine] Error: failed to upload mux %s: %v", fname, err)
 			}
 			pr.Close()
-		}(filename, mux)
+		}(filename, envelopes)
 	}
+
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
