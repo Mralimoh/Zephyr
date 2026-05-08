@@ -40,8 +40,10 @@ type Engine struct {
 	txSem chan struct{}
 	rxSem chan struct{}
 
-	processed   map[string]bool
-	processedMu sync.Mutex
+	processed     map[string]bool
+	processedRing []string
+	processedIdx  int
+	processedMu   sync.Mutex
 
 	lastTxTime time.Time
 
@@ -59,6 +61,7 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
+		processedRing: make([]string, 2000),
 		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
@@ -286,7 +289,15 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				e.processedMu.Lock()
 				for _, f := range files {
 					if !e.processed[f] {
+						oldest := e.processedRing[e.processedIdx]
+						if oldest != "" {
+							delete(e.processed, oldest)
+						}
+
 						e.processed[f] = true
+						e.processedRing[e.processedIdx] = f
+						e.processedIdx = (e.processedIdx + 1) % 2000
+
 						newFiles = append(newFiles, f)
 						foundNewData = true
 					}
@@ -436,12 +447,6 @@ func (e *Engine) RemoveSession(id string) {
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup := func() {
-		e.processedMu.Lock()
-		if len(e.processed) > 2000 {
-			e.processed = make(map[string]bool)
-		}
-		e.processedMu.Unlock()
-
 		e.closedSessionsMu.Lock()
 		for id, t := range e.closedSessions {
 			if time.Since(t) > 1*time.Minute {
@@ -472,7 +477,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
 				if len(parts) < 4 {
-					continue 
+					continue
 				}
 
 				nanoStr := parts[len(parts)-1]
