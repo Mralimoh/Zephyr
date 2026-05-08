@@ -101,6 +101,10 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
+	for len(s.rxBuf) > 4*1024*1024 && !s.closed {
+		s.rxCond.Wait()
+	}
+
 	if env.Seq == s.rxSeq {
 		if len(env.Payload) > 0 {
 			s.rxBuf = append(s.rxBuf, env.Payload...)
@@ -117,6 +121,10 @@ func (s *Session) ProcessRx(env *Envelope) {
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
+				if len(s.rxBuf) > 4*1024*1024 {
+					break
+				}
+
 				if len(nextEnv.Payload) > 0 {
 					s.rxBuf = append(s.rxBuf, nextEnv.Payload...)
 					s.rxCond.Broadcast()
