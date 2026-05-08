@@ -64,6 +64,20 @@ func NewSession(id string) *Session {
 	return s
 }
 
+func (s *Session) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return
+	}
+
+	s.closed = true
+	s.cancel()
+	s.txCond.Broadcast()
+	s.rxCond.Broadcast()
+}
+
 func (s *Session) EnqueueTx(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -155,6 +155,7 @@ func (e *Engine) flushLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			e.flushAll(context.Background())
 			return
 		case <-ticker.C:
 			e.flushAll(ctx)

@@ -100,12 +100,11 @@ func main() {
 }
 
 func handleServerConn(sessionID, targetAddr string, session *transport.Session, engine *transport.Engine) {
-	defer engine.RemoveSession(sessionID)
-
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(session.Ctx, "tcp", targetAddr)
 	if err != nil {
 		log.Printf("Dial error to %s: %v", targetAddr, err)
+		session.Close()
 		return
 	}
 	defer conn.Close()
