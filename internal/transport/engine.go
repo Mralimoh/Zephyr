@@ -3,12 +3,12 @@ package transport
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"io"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -33,6 +33,9 @@ const (
 	opGetRetry
 	opIncRetry
 	opResetFiles
+	opSetLastTx
+	opGetLastTx
+	opCheckClosed
 )
 
 type engineOp struct {
@@ -40,10 +43,12 @@ type engineOp struct {
 	session  *Session
 	sid      string
 	filename string
+	txTime   time.Time
 	resp     chan *Session
 	respList chan []*Session
 	respBool chan bool
 	respInt  chan int
+	respTime chan time.Time
 }
 
 type Engine struct {
@@ -52,13 +57,12 @@ type Engine struct {
 	peerDir Direction
 	id      string
 
-	sessions    map[string]*Session
-	processed   map[string]bool
-	fileRetries map[string]int
-	managerChan chan engineOp
-
-	closedSessions   map[string]time.Time
-	closedSessionsMu sync.Mutex
+	sessions       map[string]*Session
+	processed      map[string]bool
+	fileRetries    map[string]int
+	closedSessions map[string]time.Time
+	lastTxTime     time.Time
+	managerChan    chan engineOp
 
 	pollTicker  time.Duration
 	flushTicker time.Duration
@@ -68,7 +72,7 @@ type Engine struct {
 	txSem chan struct{}
 	rxSem chan struct{}
 
-	lastTxTime time.Time
+	chanPool sync.Pool 
 
 	zstdWriterPool sync.Pool
 }
@@ -80,12 +84,16 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		sessions:       make(map[string]*Session),
 		processed:      make(map[string]bool),
 		fileRetries:    make(map[string]int),
-		managerChan:    make(chan engineOp, 256),
 		closedSessions: make(map[string]time.Time),
+		managerChan:    make(chan engineOp, 256),
 		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
+	}
+
+	e.chanPool.New = func() any {
+		return make(chan []*Session, 1)
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -164,9 +172,10 @@ func (e *Engine) flushLoop(ctx context.Context) {
 }
 
 func (e *Engine) flushAll(ctx context.Context) {
-	resp := make(chan []*Session, 1)
-	e.managerChan <- engineOp{kind: opList, respList: resp}
-	sessions := <-resp
+	respChan := e.chanPool.Get().(chan []*Session)
+	e.managerChan <- engineOp{kind: opList, respList: respChan}
+	sessions := <-respChan
+	e.chanPool.Put(respChan)
 
 	muxes := make(map[string][]Envelope)
 	var closedIDs []string
@@ -219,7 +228,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 				pw.CloseWithError(encErr)
 			}()
 			if err := e.store.Upload(ctx, fname, pr); err == nil {
-				e.lastTxTime = time.Now()
+				e.managerChan <- engineOp{kind: opSetLastTx, txTime: time.Now()}
 			}
 			pr.Close()
 		}(filename, envelopes)
@@ -360,14 +369,16 @@ func (e *Engine) RemoveSession(id string) {
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup := func() {
-		resp := make(chan []*Session, 1)
-		e.managerChan <- engineOp{kind: opList, respList: resp}
-		sessions := <-resp
+		respChan := e.chanPool.Get().(chan []*Session)
+		e.managerChan <- engineOp{kind: opList, respList: respChan}
+		sessions := <-respChan
+		e.chanPool.Put(respChan)
 
 		for _, s := range sessions {
 			s.mu.Lock()
 			last := s.lastActivity
 			s.mu.Unlock()
+
 			if time.Since(last) > 60*time.Second {
 				e.RemoveSession(s.ID)
 			}
@@ -375,24 +386,25 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 		e.managerChan <- engineOp{kind: opResetFiles}
 
-		e.closedSessionsMu.Lock()
-		for id, t := range e.closedSessions {
-			if time.Since(t) > 1*time.Minute {
-				delete(e.closedSessions, id)
-			}
-		}
-		e.closedSessionsMu.Unlock()
-
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
 			files, err := e.store.ListQuery(ctx, pref)
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
+
 			for _, f := range files {
 				parts := strings.Split(strings.TrimSuffix(f, ".bin"), "-")
-				if len(parts) < 4 { continue }
+				if len(parts) < 4 {
+					continue
+				}
+
 				nanoStr := parts[len(parts)-1]
 				nanos, err := strconv.ParseInt(nanoStr, 10, 64)
-				if err != nil { continue }
+				if err != nil {
+					continue
+				}
+
 				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
 					e.store.Delete(ctx, f)
 				}
@@ -403,6 +415,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -422,33 +435,59 @@ func (e *Engine) runManager(ctx context.Context) {
 			switch op.kind {
 			case opAdd:
 				e.sessions[op.session.ID] = op.session
+
 			case opRemove:
 				if s, ok := e.sessions[op.sid]; ok {
 					delete(e.sessions, op.sid)
 					s.cancel()
+					e.closedSessions[op.sid] = time.Now()
 				}
+
 			case opList:
 				list := make([]*Session, 0, len(e.sessions))
 				for _, s := range e.sessions {
 					list = append(list, s)
 				}
 				op.respList <- list
+
 			case opGet:
 				op.resp <- e.sessions[op.sid]
+
 			case opCheckFile:
 				op.respBool <- e.processed[op.filename]
+
 			case opMarkFile:
 				e.processed[op.filename] = true
 				delete(e.fileRetries, op.filename)
+
 			case opUnmarkFile:
 				delete(e.processed, op.filename)
+
 			case opGetRetry:
 				op.respInt <- e.fileRetries[op.filename]
+
 			case opIncRetry:
 				e.fileRetries[op.filename]++
+
 			case opResetFiles:
-				e.processed = make(map[string]bool)
-				e.fileRetries = make(map[string]int)
+				if len(e.processed) > 500 {
+					e.processed = make(map[string]bool)
+				}
+				for id, t := range e.closedSessions {
+					if time.Since(t) > 1*time.Minute {
+						delete(e.closedSessions, id)
+					}
+				}
+
+			case opSetLastTx:
+				e.lastTxTime = op.txTime
+
+			case opGetLastTx:
+				op.respTime <- e.lastTxTime
+
+			case opCheckClosed:
+				_, closed := e.closedSessions[op.sid]
+				op.respBool <- closed
 			}
 		}
 	}
