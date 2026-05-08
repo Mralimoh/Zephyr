@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"io"
 )
 
 type Direction string
@@ -63,12 +64,16 @@ func NewSession(id string) *Session {
 	return s
 }
 
-func (s *Session) EnqueueTx(data []byte) {
+func (s *Session) EnqueueTx(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for len(s.txBuf) > 2*1024*1024 && !s.closed {
 		s.txCond.Wait()
+	}
+
+	if s.closed {
+		return io.EOF
 	}
 
 	if len(s.txBuf) == 0 {
@@ -77,6 +82,7 @@ func (s *Session) EnqueueTx(data []byte) {
 	
 	s.txBuf = append(s.txBuf, data...)
 	s.lastActivity = time.Now()
+	return nil
 }
 
 func (s *Session) ClearTx() {

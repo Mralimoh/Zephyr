@@ -52,14 +52,8 @@ func (v *VirtualConn) Write(b []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	v.session.EnqueueTx(b)
-
-	v.session.mu.Lock()
-	isClosed := v.session.closed
-	v.session.mu.Unlock()
-
-	if isClosed {
-		return 0, io.EOF
+	if err := v.session.EnqueueTx(b); err != nil {
+		return 0, err
 	}
 
 	return len(b), nil
