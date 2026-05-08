@@ -11,47 +11,52 @@ type Direction string
 const (
 	DirReq Direction = "req"
 	DirRes Direction = "res"
+
 	FlushThresholdBytes = 128 * 1024
 )
 
 type Session struct {
 	ID           string
 	mu           sync.Mutex
+	txBuf        []byte
+	txSeq        uint64
+	rxSeq        uint64
+	rxQueue      map[uint64]*Envelope
 	lastActivity time.Time
+	txBufAge     time.Time
+	closed       bool
+	rxClosed     bool
 	TargetAddr   string
 	ClientID     string
-	closed       bool
+
+	txCond *sync.Cond
+	rxBuf  []byte
+	rxCond *sync.Cond
 
 	Ctx    context.Context
 	cancel context.CancelFunc
-
-	txIn  chan []byte
-	txOut chan Envelope
-
-	rxIn  chan *Envelope
-	rxOut chan []byte
 }
 
 func NewSession(id string) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
 		ID:           id,
+		rxQueue:      make(map[uint64]*Envelope),
 		lastActivity: time.Now(),
+		txBuf:        make([]byte, 0, FlushThresholdBytes*2),
+		rxBuf:        make([]byte, 0, FlushThresholdBytes*2),
 		Ctx:          ctx,
 		cancel:       cancel,
-		txIn:         make(chan []byte, 128),
-		txOut:        make(chan Envelope, 64),
-		rxIn:         make(chan *Envelope, 128),
-		rxOut:        make(chan []byte, 64),
 	}
-
-	go s.txWorker()
-	go s.rxWorker()
+	s.txCond = sync.NewCond(&s.mu)
+	s.rxCond = sync.NewCond(&s.mu)
 
 	go func() {
 		<-ctx.Done()
 		s.mu.Lock()
 		s.closed = true
+		s.rxCond.Broadcast()
+		s.txCond.Broadcast()
 		s.mu.Unlock()
 	}()
 
@@ -59,111 +64,79 @@ func NewSession(id string) *Session {
 }
 
 func (s *Session) EnqueueTx(data []byte) {
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	select {
-	case s.txIn <- buf:
-		s.updateActivity()
-	case <-s.Ctx.Done():
-	}
-}
-
-func (s *Session) ProcessRx(env *Envelope) {
-	select {
-	case s.rxIn <- env:
-		s.updateActivity()
-	case <-s.Ctx.Done():
-	}
-}
-
-func (s *Session) updateActivity() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for len(s.txBuf) > 2*1024*1024 && !s.closed {
+		s.txCond.Wait()
+	}
+
+	if len(s.txBuf) == 0 {
+		s.txBufAge = time.Now()
+	}
+	
+	s.txBuf = append(s.txBuf, data...)
 	s.lastActivity = time.Now()
+}
+
+func (s *Session) ClearTx() {
+	s.mu.Lock()
+	s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
+	s.txCond.Broadcast()
 	s.mu.Unlock()
 }
 
-func (s *Session) txWorker() {
-	var txBuf []byte
-	var txSeq uint64
-	timer := time.NewTimer(time.Hour)
-	if !timer.Stop() { <-timer.C }
+func (s *Session) ProcessRx(env *Envelope) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastActivity = time.Now()
 
-	send := func(isClose bool) {
-		s.mu.Lock()
-		addr := s.TargetAddr
-		s.mu.Unlock()
-		
-		select {
-		case s.txOut <- Envelope{SessionID: s.ID, Seq: txSeq, Payload: txBuf, TargetAddr: addr, Close: isClose}:
-			txSeq++
-			txBuf = nil
-			timer.Stop()
-		case <-s.Ctx.Done():
-		}
+	if s.rxClosed || s.closed {
+		return
 	}
 
-	for {
-		select {
-		case data := <-s.txIn:
-			if len(txBuf) == 0 { timer.Reset(50 * time.Millisecond) }
-			txBuf = append(txBuf, data...)
-			if len(txBuf) >= FlushThresholdBytes { send(false) }
-		case <-timer.C:
-			if len(txBuf) > 0 { send(false) }
-		case <-s.Ctx.Done():
-			send(true)
+	if env.Seq == s.rxSeq {
+		if len(env.Payload) > 0 {
+			s.rxBuf = append(s.rxBuf, env.Payload...)
+			s.rxCond.Broadcast()
+		}
+		s.rxSeq++
+		if env.Close {
+			s.rxClosed = true
+			s.closed = true
+			s.cancel()
+			s.rxCond.Broadcast()
 			return
 		}
-	}
-}
 
-func (s *Session) rxWorker() {
-	rxSeq := uint64(0)
-	queue := make(map[uint64]*Envelope)
-	const maxQueueSize = 1024
-
-	for {
-		select {
-		case env := <-s.rxIn:
-			if env.Seq == rxSeq {
-				s.deliver(env)
-				rxSeq++
-				for {
-					if next, ok := queue[rxSeq]; ok {
-						s.deliver(next)
-						delete(queue, rxSeq)
-						rxSeq++
-						if next.Close {
-							return
-						}
-					} else {
-						break
-					}
+		for {
+			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
+				if len(nextEnv.Payload) > 0 {
+					s.rxBuf = append(s.rxBuf, nextEnv.Payload...)
+					s.rxCond.Broadcast()
 				}
-				if env.Close {
-					return
-				}
-			} else if env.Seq > rxSeq {
-				if len(queue) >= maxQueueSize {
+				delete(s.rxQueue, s.rxSeq)
+				s.rxSeq++
+				if nextEnv.Close {
+					s.rxClosed = true
+					s.closed = true
 					s.cancel()
+					s.rxCond.Broadcast()
 					return
 				}
-				queue[env.Seq] = env
+			} else {
+				break
 			}
-		case <-s.Ctx.Done():
+		}
+	} else if env.Seq > s.rxSeq {
+		if env.Seq-s.rxSeq > 1024 {
+			s.rxClosed = true
+			s.closed = true
+			s.cancel()
+			s.rxCond.Broadcast()
+			s.txCond.Broadcast()
 			return
 		}
-	}
-}
-
-func (s *Session) deliver(env *Envelope) {
-	if len(env.Payload) > 0 {
-		select {
-		case s.rxOut <- env.Payload:
-		case <-s.Ctx.Done():
-		}
-	}
-	if env.Close {
-		s.cancel()
+		s.rxQueue[env.Seq] = env
 	}
 }
