@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -448,6 +447,8 @@ func (e *Engine) RemoveSession(id string) {
 }
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
+	seenFiles := make(map[string]time.Time)
+
 	doCleanup := func() {
 		e.closedSessionsMu.Lock()
 		for id, t := range e.closedSessions {
@@ -458,6 +459,8 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		e.closedSessionsMu.Unlock()
 
 		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+		currentSeenInStore := make(map[string]bool)
+
 		for _, pref := range prefixes {
 			select {
 			case <-ctx.Done():
@@ -482,17 +485,23 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 					continue
 				}
 
-				nanoStr := parts[len(parts)-1]
-				nanos, err := strconv.ParseInt(nanoStr, 10, 64)
-				if err != nil {
-					continue
-				}
+				currentSeenInStore[f] = true
 
-				if time.Since(time.Unix(0, nanos)) > 2*time.Minute {
+				if firstSeen, exists := seenFiles[f]; !exists {
+					seenFiles[f] = time.Now()
+				} else if time.Since(firstSeen) > 2*time.Minute {
 					if err := e.store.Delete(ctx, f); err != nil {
 						log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", f, err)
+					} else {
+						delete(seenFiles, f)
 					}
 				}
+			}
+		}
+
+		for f := range seenFiles {
+			if !currentSeenInStore[f] {
+				delete(seenFiles, f)
 			}
 		}
 	}
