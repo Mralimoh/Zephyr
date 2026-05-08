@@ -46,16 +46,19 @@ type GoogleBackend struct {
 	tokenEx      time.Time
 	mu           sync.Mutex
 
-	fileIDs   map[string]string
-	fileIdsMu sync.RWMutex
+	fileIDs     map[string]string
+	fileIDsRing []string
+	fileIDsIdx  int
+	fileIdsMu   sync.RWMutex
 }
 
 func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
 	return &GoogleBackend{
-		httpClient: client,
-		saPath:     saPath,
-		folderID:   folderID,
-		fileIDs:    make(map[string]string),
+		httpClient:  client,
+		saPath:      saPath,
+		folderID:    folderID,
+		fileIDs:     make(map[string]string),
+		fileIDsRing: make([]string, 2000),
 	}
 }
 
@@ -324,7 +327,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	}
 
 	var resData struct {
-		Files[]struct {
+		Files []struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"files"`
@@ -334,14 +337,18 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	}
 
 	b.fileIdsMu.Lock()
-	if len(b.fileIDs) > 2000 {
-		b.fileIDs = make(map[string]string)
-	}
-
-	var names[]string
+	var names []string
 	for _, f := range resData.Files {
 		if strings.HasPrefix(f.Name, prefix) {
-			b.fileIDs[f.Name] = f.ID
+			if _, exists := b.fileIDs[f.Name]; !exists {
+				oldest := b.fileIDsRing[b.fileIDsIdx]
+				if oldest != "" {
+					delete(b.fileIDs, oldest)
+				}
+				b.fileIDs[f.Name] = f.ID
+				b.fileIDsRing[b.fileIDsIdx] = f.Name
+				b.fileIDsIdx = (b.fileIDsIdx + 1) % 2000
+			}
 			names = append(names, f.Name)
 		}
 	}
