@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"sync"
 	"encoding/binary"
 	"fmt"
 
@@ -109,7 +108,7 @@ func main() {
 		listenAddr = "127.0.0.1:1080"
 	}
 
-	fdns := newFakeDNS()
+	fdns := newFakeDNS(ctx)
 
 	server := socks5.NewServer(
 		socks5.WithDial(func(dc context.Context, network, addr string) (net.Conn, error) {
@@ -151,55 +150,74 @@ func main() {
 	cancel()
 }
 
+type dnsOp struct {
+	isGetIP  bool
+	hostname string
+	ip       string
+	respIP   chan net.IP
+	respHost chan string
+}
+
 type fakeDNS struct {
-	mu       sync.RWMutex
 	table    map[string]string
 	revTable map[string]string
 	nextIP   uint32
+	ops      chan dnsOp
 }
 
-func newFakeDNS() *fakeDNS {
-	return &fakeDNS{
+func newFakeDNS(ctx context.Context) *fakeDNS {
+	f := &fakeDNS{
 		table:    make(map[string]string),
 		revTable: make(map[string]string),
 		nextIP:   0x0A000001,
+		ops:      make(chan dnsOp, 100),
+	}
+	go f.runManager(ctx)
+	return f
+}
+
+func (f *fakeDNS) runManager(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case op := <-f.ops:
+			if op.isGetIP {
+				if len(f.table) > 5000 {
+					f.table = make(map[string]string)
+					f.revTable = make(map[string]string)
+					f.nextIP = 0x0A000001
+				}
+				if ipStr, ok := f.revTable[op.hostname]; ok {
+					op.respIP <- net.ParseIP(ipStr)
+					continue
+				}
+				ip := make(net.IP, 4)
+				binary.BigEndian.PutUint32(ip, f.nextIP)
+				f.table[ip.String()] = op.hostname
+				f.revTable[op.hostname] = ip.String()
+				f.nextIP++
+				if f.nextIP > 0x0AFFFFFF { f.nextIP = 0x0A000001 }
+				op.respIP <- ip
+			} else {
+				host, _ := f.table[op.ip]
+				op.respHost <- host
+			}
+		}
 	}
 }
 
 func (f *fakeDNS) GetIP(hostname string) net.IP {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	if len(f.table) > 5000 {
-		f.table = make(map[string]string)
-		f.revTable = make(map[string]string)
-		f.nextIP = 0x0A000001
-	}
-
-	if ipStr, ok := f.revTable[hostname]; ok {
-		return net.ParseIP(ipStr)
-	}
-
-	ip := make(net.IP, 4)
-	binary.BigEndian.PutUint32(ip, f.nextIP)
-	ipStr := ip.String()
-
-	f.table[ipStr] = hostname
-	f.revTable[hostname] = ipStr
-	
-	f.nextIP++
-	if f.nextIP > 0x0AFFFFFF {
-		f.nextIP = 0x0A000001
-	}
-
-	return ip
+	resp := make(chan net.IP, 1)
+	f.ops <- dnsOp{isGetIP: true, hostname: hostname, respIP: resp}
+	return <-resp
 }
 
 func (f *fakeDNS) GetHostname(ip string) (string, bool) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	host, ok := f.table[ip]
-	return host, ok
+	resp := make(chan string, 1)
+	f.ops <- dnsOp{isGetIP: false, ip: ip, respHost: resp}
+	host := <-resp
+	return host, host != ""
 }
 
 type rawResolver struct {
