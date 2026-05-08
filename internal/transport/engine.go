@@ -72,8 +72,6 @@ type Engine struct {
 	txSem chan struct{}
 	rxSem chan struct{}
 
-	chanPool sync.Pool 
-
 	zstdWriterPool sync.Pool
 }
 
@@ -90,10 +88,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
-	}
-
-	e.chanPool.New = func() any {
-		return make(chan []*Session, 1)
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -172,13 +166,12 @@ func (e *Engine) flushLoop(ctx context.Context) {
 }
 
 func (e *Engine) flushAll(ctx context.Context) {
-	respChan := e.chanPool.Get().(chan []*Session)
+	respChan := make(chan[]*Session, 1)
 	e.managerChan <- engineOp{kind: opList, respList: respChan}
 	sessions := <-respChan
-	e.chanPool.Put(respChan)
 
 	muxes := make(map[string][]Envelope)
-	var closedIDs []string
+	var closedIDs[]string
 
 	for _, s := range sessions {
 		collecting := true
@@ -210,7 +203,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 			return
 		}
 
-		go func(fname string, envs []Envelope) {
+		go func(fname string, envs[]Envelope) {
 			defer func() { <-e.txSem }()
 			pr, pw := io.Pipe()
 			go func() {
@@ -369,10 +362,9 @@ func (e *Engine) RemoveSession(id string) {
 
 func (e *Engine) cleanupLoop(ctx context.Context) {
 	doCleanup := func() {
-		respChan := e.chanPool.Get().(chan []*Session)
+		respChan := make(chan[]*Session, 1)
 		e.managerChan <- engineOp{kind: opList, respList: respChan}
 		sessions := <-respChan
-		e.chanPool.Put(respChan)
 
 		for _, s := range sessions {
 			s.mu.Lock()
@@ -386,7 +378,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 
 		e.managerChan <- engineOp{kind: opResetFiles}
 
-		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+		prefixes :=[]string{string(DirReq) + "-", string(DirRes) + "-"}
 		for _, pref := range prefixes {
 			files, err := e.store.ListQuery(ctx, pref)
 			if err != nil {

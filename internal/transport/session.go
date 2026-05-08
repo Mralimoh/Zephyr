@@ -120,6 +120,7 @@ func (s *Session) txWorker() {
 func (s *Session) rxWorker() {
 	rxSeq := uint64(0)
 	queue := make(map[uint64]*Envelope)
+	const maxQueueSize = 1024
 
 	for {
 		select {
@@ -132,11 +133,21 @@ func (s *Session) rxWorker() {
 						s.deliver(next)
 						delete(queue, rxSeq)
 						rxSeq++
-						if next.Close { return }
-					} else { break }
+						if next.Close {
+							return
+						}
+					} else {
+						break
+					}
 				}
-				if env.Close { return }
+				if env.Close {
+					return
+				}
 			} else if env.Seq > rxSeq {
+				if len(queue) >= maxQueueSize {
+					s.cancel()
+					return
+				}
 				queue[env.Seq] = env
 			}
 		case <-s.Ctx.Done():
