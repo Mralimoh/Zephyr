@@ -115,8 +115,13 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	for len(s.rxBuf) > 4*1024*1024 && !s.closed {
-		s.rxCond.Wait()
+	if len(s.rxBuf) > 4*1024*1024 {
+		s.rxClosed = true
+		s.closed = true
+		s.cancel()
+		s.rxCond.Broadcast()
+		s.txCond.Broadcast()
+		return
 	}
 
 	if env.Seq == s.rxSeq {
@@ -136,7 +141,12 @@ func (s *Session) ProcessRx(env *Envelope) {
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
 				if len(s.rxBuf) > 4*1024*1024 {
-					break
+					s.rxClosed = true
+					s.closed = true
+					s.cancel()
+					s.rxCond.Broadcast()
+					s.txCond.Broadcast()
+					return
 				}
 
 				if len(nextEnv.Payload) > 0 {
