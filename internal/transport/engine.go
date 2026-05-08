@@ -47,9 +47,6 @@ type Engine struct {
 
 	lastTxTime time.Time
 
-	fileRetries   map[string]int
-	fileRetriesMu sync.Mutex
-
 	zstdWriterPool sync.Pool
 	flushSignal    chan struct{}
 }
@@ -61,12 +58,11 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		processedRing: make([]string, 2000),
+		processedRing:  make([]string, 2000),
 		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
-		fileRetries:    make(map[string]int),
 		flushSignal:    make(chan struct{}, 1),
 	}
 
@@ -225,33 +221,43 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 		go func(fname string, envelopes []Envelope) {
 			defer func() { <-e.txSem }()
+			delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
 
-			pr, pw := io.Pipe()
-
-			go func() {
-				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
-				zw.Reset(pw)
-				var encErr error
-				
-				for _, env := range envelopes {
-					if err := env.Encode(zw); err != nil {
-						encErr = err
-						break
+			for i := 0; i < len(delays); i++ {
+				if delays[i] > 0 {
+					select {
+					case <-time.After(delays[i]):
+					case <-ctx.Done():
+						return
 					}
 				}
-				
-				zw.Close()
-				e.zstdWriterPool.Put(zw)
-				pw.CloseWithError(encErr)
-			}()
 
-			err := e.store.Upload(ctx, fname, pr)
-			if err == nil {
-				e.lastTxTime = time.Now()
-			} else {
-				log.Printf("[Engine] Error: failed to upload mux %s: %v", fname, err)
+				pr, pw := io.Pipe()
+				go func() {
+					zw := e.zstdWriterPool.Get().(*zstd.Encoder)
+					zw.Reset(pw)
+					var encErr error
+					for _, env := range envelopes {
+						if err := env.Encode(zw); err != nil {
+							encErr = err
+							break
+						}
+					}
+					zw.Close()
+					e.zstdWriterPool.Put(zw)
+					pw.CloseWithError(encErr)
+				}()
+
+				err := e.store.Upload(ctx, fname, pr)
+				pr.Close()
+
+				if err == nil {
+					e.lastTxTime = time.Now()
+					return
+				}
+				log.Printf("[Engine] Upload failed for %s (attempt %d/3): %v", fname, i+1, err)
 			}
-			pr.Close()
+			log.Printf("[Engine] Critical: Upload failed after 3 attempts. Data lost: %s", fname)
 		}(filename, mux)
 	}
 	for _, id := range closedIDs {
@@ -353,33 +359,31 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 	defer func() { <-e.rxSem }()
 
-	rc, err := e.store.Download(ctx, fname)
-	if err != nil {
-		log.Printf("[Engine] Warning: download failed for %s (Retrying): %v", fname, err)
-		
-		e.fileRetriesMu.Lock()
-		e.fileRetries[fname]++
-		retryCount := e.fileRetries[fname]
-		e.fileRetriesMu.Unlock()
+	delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
+	var rc io.ReadCloser
+	var err error
 
-		if retryCount < 3 {
-			e.processedMu.Lock()
-			delete(e.processed, fname)
-			e.processedMu.Unlock()
-		} else {
-			log.Printf("[Engine] Error: giving up on %s after 3 attempts, deleting.", fname)
-			e.store.Delete(ctx, fname)
-			e.fileRetriesMu.Lock()
-			delete(e.fileRetries, fname)
-			e.fileRetriesMu.Unlock()
+	for i := 0; i < len(delays); i++ {
+		if delays[i] > 0 {
+			select {
+			case <-time.After(delays[i]):
+			case <-ctx.Done():
+				return
+			}
 		}
+
+		rc, err = e.store.Download(ctx, fname)
+		if err == nil {
+			break
+		}
+		log.Printf("[Engine] Download failed for %s (attempt %d/3): %v", fname, i+1, err)
+	}
+
+	if err != nil {
+		log.Printf("[Engine] Error: giving up on %s after 3 attempts.", fname)
 		return
 	}
 	defer rc.Close()
-
-	e.fileRetriesMu.Lock()
-	delete(e.fileRetries, fname)
-	e.fileRetriesMu.Unlock()
 
 	zr, err := zstd.NewReader(rc)
 	if err != nil {
@@ -397,9 +401,6 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	for {
 		var env Envelope
 		if err := env.Decode(zr); err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF {
-				log.Printf("[Engine] Warning: decode error in file %s: %v", fname, err)
-			}
 			break
 		}
 
