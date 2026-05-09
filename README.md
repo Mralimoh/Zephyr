@@ -48,8 +48,8 @@
 ### ۲. ساخت فایل‌های اجرایی
 
 ```bash
-go build -o client.exe ./cmd/client
-go build -o server ./cmd/server
+go build -o bin/client.exe ./cmd/client
+go build -o bin/server ./cmd/server
 ```
 
 ### ۳. پیکربندی
