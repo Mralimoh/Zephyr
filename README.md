@@ -60,7 +60,7 @@ go build -o server ./cmd/server
   "google_folder_id": "YOUR_FOLDER_ID",
   "transport": {
     "TargetIP": "216.239.38.120:443",
-    "SNI": "google.com",
+    "SNI": "www.google.com",
     "HostHeader": "www.googleapis.com"
   }
 }
