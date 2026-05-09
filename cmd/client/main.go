@@ -30,13 +30,6 @@ func generateSessionID() string {
 	return hex.EncodeToString(b)
 }
 
-type StorageClient interface {
-	Login(ctx context.Context) error
-	FindFolder(ctx context.Context, name string) (string, error)
-	CreateFolder(ctx context.Context, name string) (string, error)
-	transport.Datastore
-}
-
 func main() {
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")

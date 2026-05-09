@@ -108,12 +108,6 @@ func (e *Engine) Start(ctx context.Context) {
 	go e.cleanupLoop(ctx)
 }
 
-func (e *Engine) GetSession(id string) *Session {
-	e.sessionMu.RLock()
-	defer e.sessionMu.RUnlock()
-	return e.sessions[id]
-}
-
 func (e *Engine) AddSession(s *Session) {
 	e.sessionMu.Lock()
 	defer e.sessionMu.Unlock()
