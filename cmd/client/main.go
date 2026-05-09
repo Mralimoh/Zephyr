@@ -52,21 +52,14 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	var backend StorageClient
-	if appCfg.StorageType == "google" {
-		customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
-		backend = storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)
-	} else {
-		backend, err = storage.NewLocalBackend(appCfg.LocalDir)
-		if err != nil {
-			log.Fatalf("Failed to init local storage: %v", err)
-		}
-	}
+	customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
+	backend := storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)
+
 	if err := backend.Login(ctx); err != nil {
 		log.Fatalf("Backend login failed: %v", err)
 	}
 
-	if appCfg.StorageType == "google" && appCfg.GoogleFolderID == "" {
+	if appCfg.GoogleFolderID == "" {
 		log.Println("Zero-Config: Searching for existing Google Drive folder 'Zephyr-Data'...")
 		folderID, err := backend.FindFolder(ctx, "Zephyr-Data")
 		if err != nil {
@@ -79,8 +72,6 @@ func main() {
 			if err != nil {
 				log.Fatalf("Failed to auto-create folder: %v", err)
 			}
-		} else {
-			log.Printf("Zero-Config: Found existing folder with ID %s", folderID)
 		}
 
 		appCfg.GoogleFolderID = folderID
@@ -95,6 +86,7 @@ func main() {
 	if cid == "" {
 		cid = generateSessionID()[:8]
 	}
+	
 	engine := transport.NewEngine(backend, true, cid)
 	engine.Start(ctx)
 

@@ -11,8 +11,6 @@ import (
 type AppConfig struct {
 	ListenAddr string `json:"listen_addr,omitempty"`
 	ClientID string `json:"client_id,omitempty"`
-	StorageType string `json:"storage_type"`
-	LocalDir string `json:"local_dir,omitempty"`
 	GoogleFolderID string `json:"google_folder_id,omitempty"`
 	Transport httpclient.TransportConfig `json:"transport,omitempty"`
 }
