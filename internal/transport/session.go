@@ -38,22 +38,22 @@ type Session struct {
 	cancel context.CancelFunc
 }
 
-func NewSession(id string) *Session {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewSession(ctx context.Context, id string) *Session {
+	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		ID:           id,
 		rxQueue:      make(map[uint64]*Envelope),
 		lastActivity: time.Now(),
 		txBuf:        make([]byte, 0, FlushThresholdBytes*2),
 		rxBuf:        make([]byte, 0, FlushThresholdBytes*2),
-		Ctx:          ctx,
+		Ctx:          sessionCtx,
 		cancel:       cancel,
 	}
 	s.txCond = sync.NewCond(&s.mu)
 	s.rxCond = sync.NewCond(&s.mu)
 
 	go func() {
-		<-ctx.Done()
+		<-sessionCtx.Done()
 		s.mu.Lock()
 		s.closed = true
 		s.rxCond.Broadcast()

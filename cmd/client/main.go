@@ -105,7 +105,7 @@ func main() {
 			}
 
 			sessionID := generateSessionID()[:16]
-			session := transport.NewSession(sessionID)
+			session := transport.NewSession(ctx, sessionID)
 			session.TargetAddr = targetAddr
 			engine.AddSession(session)
 
