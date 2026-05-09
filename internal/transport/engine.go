@@ -53,7 +53,7 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		processedRing:  make([]string, 2000),
+		processedRing:  make([]string, 120),
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
 	}
@@ -253,7 +253,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 						e.processed[f] = true
 						e.processedRing[e.processedIdx] = f
-						e.processedIdx = (e.processedIdx + 1) % 2000
+						e.processedIdx = (e.processedIdx + 1) % 120
 
 						newFiles = append(newFiles, f)
 						foundNewData = true
