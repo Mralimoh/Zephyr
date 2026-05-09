@@ -185,6 +185,5 @@ type rawResolver struct {
 
 func (r rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
 	fakeIP := r.fdns.GetIP(name)
-	log.Printf("[DNS] %s -> %s", name, fakeIP)
 	return ctx, fakeIP, nil
 }
