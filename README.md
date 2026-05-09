@@ -57,10 +57,7 @@ go build -o server ./cmd/server
 ```json
 {
   "listen_addr": "127.0.0.1:1080",
-  "storage_type": "google",
   "google_folder_id": "YOUR_FOLDER_ID",
-  "refresh_rate_ms": 100,
-  "flush_rate_ms": 200,
   "transport": {
     "TargetIP": "216.239.38.120:443",
     "SNI": "google.com",
@@ -73,10 +70,7 @@ go build -o server ./cmd/server
 
 ```json
 {
-  "storage_type": "google",
-  "google_folder_id": "YOUR_FOLDER_ID",
-  "refresh_rate_ms": 100,
-  "flush_rate_ms": 200
+  "google_folder_id": "YOUR_FOLDER_ID"
 }
 ```
 
