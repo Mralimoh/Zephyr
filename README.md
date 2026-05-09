@@ -35,11 +35,15 @@
 
 ### ۱. دریافت فایل اعتبارنامه
 
-۱. **فعال‌سازی API:** به کنسول گوگل کلاود (Google Cloud Console) بروید، یک پروژه بسازید و Google Drive API را فعال کنید.
-۲. **تنظیم صفحه رضایت (Consent Screen):** به بخش "APIs & Services" > "OAuth consent screen" بروید. نام برنامه و ایمیل پشتیبانی را وارد کنید.
-۳. **ساخت اعتبارنامه:** به بخش "Credentials" > "Create Credentials" > OAuth client ID بروید. نوع برنامه را **Desktop App** انتخاب کنید.
-۴. **دانلود فایل JSON:** فایل کلاینت سکرت (Client Secret) را دانلود کرده و نام آن را به `credentials.json` تغییر دهید.
-۵. **انتشار برنامه (پیشنهادی):** اگر وضعیت برنامه روی "Testing" باشد، توکن شما هر ۷ روز منقضی می‌شود. در صفحه OAuth consent screen روی دکمه "Publish App" کلیک کنید تا دسترسی برای اکانت شما دائمی شود.
+۱. **فعال‌سازی API**: به کنسول گوگل کلاود (Google Cloud Console) بروید، یک پروژه بسازید و Google Drive API را فعال کنید.
+
+۲. **تنظیم صفحه رضایت (Consent Screen)**: به بخش "APIs & Services" > "OAuth consent screen" بروید. نام برنامه و ایمیل پشتیبانی را وارد کنید.
+
+۳. **ساخت اعتبارنامه**: به بخش "Credentials" > "Create Credentials" > OAuth client ID بروید. نوع برنامه را **Desktop App** انتخاب کنید.
+
+۴. **دانلود فایل JSON**: فایل کلاینت سکرت (Client Secret) را دانلود کرده و نام آن را به `credentials.json` تغییر دهید.
+
+۵. **انتشار برنامه (پیشنهادی)**: اگر وضعیت برنامه روی "Testing" باشد، توکن شما هر ۷ روز منقضی می‌شود. در صفحه OAuth consent screen روی دکمه "Publish App" کلیک کنید تا دسترسی برای اکانت شما دائمی شود.
 
 ### 2. ساخت فایل‌های اجرایی
 
