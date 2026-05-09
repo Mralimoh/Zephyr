@@ -66,7 +66,7 @@ go build -o server ./cmd/server
 }
 ```
 
-**سمت سرور (`server_config.json`):**
+**سمت سرور (server_config.json):**
 
 ```json
 {
