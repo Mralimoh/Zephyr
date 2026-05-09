@@ -82,7 +82,7 @@ func (s *Session) EnqueueTx(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for len(s.txBuf) > 2*1024*1024 && !s.closed {
+	for len(s.txBuf) > 8*1024*1024 && !s.closed {
 		s.txCond.Wait()
 	}
 
@@ -115,7 +115,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	if len(s.rxBuf) > 4*1024*1024 {
+	if len(s.rxBuf) > 16*1024*1024 {
 		s.rxClosed = true
 		s.closed = true
 		s.cancel()
@@ -140,7 +140,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
-				if len(s.rxBuf) > 4*1024*1024 {
+				if len(s.rxBuf) > 16*1024*1024 {
 					s.rxClosed = true
 					s.closed = true
 					s.cancel()
