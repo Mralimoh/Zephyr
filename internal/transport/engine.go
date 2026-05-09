@@ -44,7 +44,6 @@ type Engine struct {
 	lastTxTime time.Time
 
 	zstdWriterPool sync.Pool
-	flushSignal    chan struct{}
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
@@ -57,7 +56,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		processedRing:  make([]string, 2000),
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
-		flushSignal:    make(chan struct{}, 1),
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -98,11 +96,6 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 
 func (e *Engine) Start(ctx context.Context) {
 	e.makeBaseline(ctx)
-
-	go func() {
-		_, _ = e.store.ListQuery(ctx, "warmup-")
-	}()
-
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
 	go e.cleanupLoop(ctx)
