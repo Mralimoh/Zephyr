@@ -48,7 +48,7 @@
 ### ۲. ساخت فایل‌های اجرایی
 
 ```bash
-go build -o bin/client.exe ./cmd/client
+go build -o bin/client ./cmd/client
 go build -o bin/server ./cmd/server
 ```
 
