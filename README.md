@@ -39,7 +39,7 @@
 
 ۲. **تنظیم صفحه رضایت (Consent Screen)**: به بخش "APIs & Services" > "OAuth consent screen" بروید. نام برنامه و ایمیل پشتیبانی را وارد کنید.
 
-۳. **ساخت اعتبارنامه**: به بخش "Credentials" > "Create Credentials" > OAuth client ID بروید. نوع برنامه را **Desktop App** انتخاب کنید.
+۳. **ساخت اعتبارنامه**: به بخش "Credentials" > "Create Credentials" > "OAuth client ID" بروید. نوع برنامه را **Desktop App** انتخاب کنید.
 
 ۴. **دانلود فایل JSON**: فایل کلاینت سکرت (Client Secret) را دانلود کرده و نام آن را به `credentials.json` تغییر دهید.
 
