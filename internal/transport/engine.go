@@ -409,7 +409,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		}
 		e.closedSessionsMu.Unlock()
 
-		prefixes := []string{string(DirReq) + "-", string(DirRes) + "-"}
+		prefixes :=[]string{string(e.myDir) + "-"}
 		currentSeenInStore := make(map[string]bool)
 
 		for _, pref := range prefixes {
