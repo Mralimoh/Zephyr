@@ -96,9 +96,6 @@ func main() {
 		cid = generateSessionID()[:8]
 	}
 	engine := transport.NewEngine(backend, true, cid)
-	if appCfg.FlushRateMs > 0 {
-		engine.SetFlushRate(appCfg.FlushRateMs)
-	}
 	engine.Start(ctx)
 
 	listenAddr := appCfg.ListenAddr

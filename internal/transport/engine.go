@@ -31,8 +31,6 @@ type Engine struct {
 	closedSessions   map[string]time.Time
 	closedSessionsMu sync.Mutex
 
-	flushTicker time.Duration
-
 	OnNewSession func(sessionID, targetAddr string, s *Session)
 
 	txSem chan struct{}
@@ -57,7 +55,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
 		processedRing:  make([]string, 2000),
-		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
 		flushSignal:    make(chan struct{}, 1),
@@ -80,12 +77,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 	}
 
 	return e
-}
-
-func (e *Engine) SetFlushRate(ms int) {
-	if ms > 0 {
-		e.flushTicker = time.Duration(ms) * time.Millisecond
-	}
 }
 
 func (e *Engine) makeBaseline(ctx context.Context) {
@@ -131,7 +122,7 @@ func (e *Engine) AddSession(s *Session) {
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
-	ticker := time.NewTicker(e.flushTicker)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -164,7 +155,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 		
 		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
 		              len(s.txBuf) >= FlushThresholdBytes || 
-		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= e.flushTicker)
+		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 100 * time.Millisecond)
 
 		if !shouldSend {
 			s.mu.Unlock()

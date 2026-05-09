@@ -78,9 +78,6 @@ func main() {
 	}
 
 	engine := transport.NewEngine(backend, false, "")
-	if appCfg.FlushRateMs > 0 {
-		engine.SetFlushRate(appCfg.FlushRateMs)
-	}
 
 	engine.OnNewSession = func(sessionID, targetAddr string, session *transport.Session) {
 		log.Printf("Server received new session %s destined for %s", sessionID, targetAddr)
