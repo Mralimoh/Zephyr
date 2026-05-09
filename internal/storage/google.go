@@ -52,6 +52,10 @@ type GoogleBackend struct {
 	fileIdsMu   sync.RWMutex
 }
 
+func (b *GoogleBackend) GetSecret() string {
+	return b.clientSecret
+}
+
 func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
 	return &GoogleBackend{
 		httpClient:  client,
