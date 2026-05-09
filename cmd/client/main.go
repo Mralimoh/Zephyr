@@ -19,7 +19,6 @@ import (
 	"Zephyr/internal/httpclient"
 	"Zephyr/internal/storage"
 	"Zephyr/internal/transport"
-	"Zephyr/internal/security"
 	"github.com/things-go/go-socks5"
 )
 
@@ -81,10 +80,7 @@ func main() {
 		cid = generateSessionID()[:8]
 	}
 	
-	secret := backend.GetSecret()
-	encKey := security.DeriveKey(secret)
-
-	engine := transport.NewEngine(backend, true, cid, encKey)
+	engine := transport.NewEngine(backend, true, cid)
 	engine.Start(ctx)
 
 	listenAddr := appCfg.ListenAddr

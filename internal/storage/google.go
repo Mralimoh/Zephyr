@@ -52,17 +52,13 @@ type GoogleBackend struct {
 	fileIdsMu   sync.RWMutex
 }
 
-func (b *GoogleBackend) GetSecret() string {
-	return b.clientSecret
-}
-
 func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
 	return &GoogleBackend{
 		httpClient:  client,
 		saPath:      saPath,
 		folderID:    folderID,
 		fileIDs:     make(map[string]string),
-		fileIDsRing: make([]string, 120),
+		fileIDsRing: make([]string, 2000),
 	}
 }
 
@@ -351,7 +347,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 				}
 				b.fileIDs[f.Name] = f.ID
 				b.fileIDsRing[b.fileIDsIdx] = f.Name
-				b.fileIDsIdx = (b.fileIDsIdx + 1) % 120
+				b.fileIDsIdx = (b.fileIDsIdx + 1) % 2000
 			}
 			names = append(names, f.Name)
 		}

@@ -14,7 +14,6 @@ import (
 	"Zephyr/internal/httpclient"
 	"Zephyr/internal/storage"
 	"Zephyr/internal/transport"
-	"Zephyr/internal/security"
 )
 
 func main() {
@@ -60,10 +59,7 @@ func main() {
 		}
 	}
 
-	secret := backend.GetSecret()
-	encKey := security.DeriveKey(secret)
-
-	engine := transport.NewEngine(backend, false, "", encKey)
+	engine := transport.NewEngine(backend, false, "")
 
 	engine.OnNewSession = func(sessionID, targetAddr string, session *transport.Session) {
 		log.Printf("Server received new session %s destined for %s", sessionID, targetAddr)

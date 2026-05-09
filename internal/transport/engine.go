@@ -9,7 +9,6 @@ import (
 	"time"
 	"io"
 
-	"Zephyr/internal/security"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -45,20 +44,18 @@ type Engine struct {
 	lastTxTime time.Time
 
 	zstdWriterPool sync.Pool
-	encKey  []byte
 }
 
-func NewEngine(store Datastore, isClient bool, clientID string, encryptionKey []byte) *Engine {
+func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 	e := &Engine{
 		store:          store,
 		id:             clientID,
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		processedRing:  make([]string, 120),
+		processedRing:  make([]string, 2000),
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
-		encKey:         encryptionKey,
 	}
 
 	e.zstdWriterPool.New = func() any {
@@ -198,23 +195,15 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 				pr, pw := io.Pipe()
 				go func() {
-					encWriter, err := security.NewEncryptingWriter(pw, e.encKey)
-					if err != nil {
-						pw.CloseWithError(fmt.Errorf("encryption layer failed: %w", err))
-						return
-					}
-
 					zw := e.zstdWriterPool.Get().(*zstd.Encoder)
-					zw.Reset(encWriter)
-					
+					zw.Reset(pw)
 					var encErr error
 					for _, env := range envelopes {
 						if err := env.Encode(zw); err != nil {
-							encErr = fmt.Errorf("envelope encode failed: %w", err)
+							encErr = err
 							break
 						}
 					}
-					
 					zw.Close()
 					e.zstdWriterPool.Put(zw)
 					pw.CloseWithError(encErr)
@@ -264,7 +253,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 						e.processed[f] = true
 						e.processedRing[e.processedIdx] = f
-						e.processedIdx = (e.processedIdx + 1) % 120
+						e.processedIdx = (e.processedIdx + 1) % 2000
 
 						newFiles = append(newFiles, f)
 						foundNewData = true
@@ -347,15 +336,9 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 	defer rc.Close()
 
-	decReader, err := security.NewDecryptingReader(rc, e.encKey)
+	zr, err := zstd.NewReader(rc)
 	if err != nil {
-		log.Printf("[Engine] Decryption failed for %s: %v", fname, err)
-		return
-	}
-
-	zr, err := zstd.NewReader(decReader)
-	if err != nil {
-		log.Printf("[Engine] Failed to create zstd reader for %s: %v", fname, err)
+		log.Printf("[Engine] Error: failed to create zstd reader for %s: %v", fname, err)
 		return
 	}
 	defer zr.Close()
