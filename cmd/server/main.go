@@ -78,9 +78,6 @@ func main() {
 	}
 
 	engine := transport.NewEngine(backend, false, "")
-	if appCfg.RefreshRateMs > 0 {
-		engine.SetPollRate(appCfg.RefreshRateMs)
-	}
 	if appCfg.FlushRateMs > 0 {
 		engine.SetFlushRate(appCfg.FlushRateMs)
 	}

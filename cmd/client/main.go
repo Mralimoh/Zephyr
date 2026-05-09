@@ -96,9 +96,6 @@ func main() {
 		cid = generateSessionID()[:8]
 	}
 	engine := transport.NewEngine(backend, true, cid)
-	if appCfg.RefreshRateMs > 0 {
-		engine.SetPollRate(appCfg.RefreshRateMs)
-	}
 	if appCfg.FlushRateMs > 0 {
 		engine.SetFlushRate(appCfg.FlushRateMs)
 	}

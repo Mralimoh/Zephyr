@@ -14,7 +14,6 @@ type AppConfig struct {
 	StorageType string `json:"storage_type"`
 	LocalDir string `json:"local_dir,omitempty"`
 	GoogleFolderID string `json:"google_folder_id,omitempty"`
-	RefreshRateMs int `json:"refresh_rate_ms,omitempty"`
 	FlushRateMs int `json:"flush_rate_ms,omitempty"`
 	Transport httpclient.TransportConfig `json:"transport,omitempty"`
 }

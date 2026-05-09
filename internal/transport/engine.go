@@ -31,7 +31,6 @@ type Engine struct {
 	closedSessions   map[string]time.Time
 	closedSessionsMu sync.Mutex
 
-	pollTicker  time.Duration
 	flushTicker time.Duration
 
 	OnNewSession func(sessionID, targetAddr string, s *Session)
@@ -58,7 +57,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
 		processedRing:  make([]string, 2000),
-		pollTicker:     100 * time.Millisecond,
 		flushTicker:    50 * time.Millisecond,
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
@@ -82,21 +80,6 @@ func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
 	}
 
 	return e
-}
-
-func (e *Engine) SetRefreshRate(ms int) {
-	if ms > 0 {
-		e.pollTicker = time.Duration(ms) * time.Millisecond
-		if e.flushTicker == 300*time.Millisecond {
-			e.flushTicker = time.Duration(ms) * time.Millisecond
-		}
-	}
-}
-
-func (e *Engine) SetPollRate(ms int) {
-	if ms > 0 {
-		e.pollTicker = time.Duration(ms) * time.Millisecond
-	}
 }
 
 func (e *Engine) SetFlushRate(ms int) {
@@ -278,17 +261,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				prefix += e.id + "-mux-"
 			}
 
-			files, err := e.store.ListQuery(ctx, prefix)
-			if err != nil {
-				log.Printf("[Engine] List error in poll: %v", err)
-				select {
-				case <-time.After(e.pollTicker):
-				case <-ctx.Done():
-					return
-				}
-				continue
-			}
-
+			files, _ := e.store.ListQuery(ctx, prefix)
 			foundNewData := false
 			if len(files) > 0 {
 				var newFiles []string
