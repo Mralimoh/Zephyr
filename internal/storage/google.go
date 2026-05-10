@@ -542,7 +542,7 @@ func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, client
 	if err != nil {
 		return err
 	}
-	
+	req.Host = u.Host 
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := b.httpClient.Do(req)
