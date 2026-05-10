@@ -73,7 +73,7 @@ go build -o bin/server ./cmd/server
 
    ```javascript
    const SERVER_URL = 'http://YOUR_SERVER_IP:1080/push';
-
+```
 ۳. پیکربندی (Zero-Config)
 
 قابلیت "پیکربندی صفر": اگر مقدار google_folder_id را در فایل‌ها خالی ("") بگذارید، کلاینت در اولین اجرا خودش پوشه Zephyr-Data را در گوگل‌درایو شما می‌سازد و کُد آن را در فایل تنظیمات ذخیره می‌کند!
