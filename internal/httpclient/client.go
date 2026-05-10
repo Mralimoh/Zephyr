@@ -25,17 +25,15 @@ type hostRewriteTransport struct {
 }
 
 func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	host := req.URL.Host
-
-	isGoogle := strings.Contains(host, "google")
-	isDriveTarget := (host == "www.googleapis.com") || (host == "www.google.com")
-
-	if isGoogle && !isDriveTarget {
-		req.Host = host
-	} else if t.HostHeader != "" && req.Host == "" {
-		req.Host = t.HostHeader
+	if strings.HasPrefix(req.URL.Path, "/macros/") {
+		req.Host = req.URL.Host
+		return t.Transport.RoundTrip(req)
 	}
 
+	if t.HostHeader != "" && req.Host == "" {
+		req.Host = t.HostHeader
+	}
+	
 	return t.Transport.RoundTrip(req)
 }
 
