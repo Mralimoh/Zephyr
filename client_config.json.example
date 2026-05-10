@@ -1,0 +1,13 @@
+{
+  "listen_addr": "127.0.0.1:1000",
+  "mode": "driver",
+  "gas_url": "YOUR_SCRIPT_URL",
+  "gas_key": "YOUR_GAS_KEY",
+  "google_folder_id": "YOUR_FOLDER_ID",
+  "transport": {
+    "TargetIP": "216.239.38.120:443",
+    "SNI": "www.google.com",
+    "HostHeader": "www.googleapis.com",
+    "InsecureSkipVerify": false
+  }
+}

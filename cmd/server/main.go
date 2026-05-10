@@ -67,9 +67,7 @@ func main() {
 		go handleServerConn(sessionID, targetAddr, session, engine)
 	}
 
-	if appCfg.Mode == "script" {
-  	  go startGasListener(ctx, appCfg, engine)
-	}
+	go startGasListener(ctx, appCfg, engine)
 
 	engine.Start(ctx)
 

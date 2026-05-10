@@ -1,0 +1,5 @@
+{
+  "listen_addr": ":1080",
+  "gas_key": "YOUR_GAS_KEY",
+  "google_folder_id": "YOUR_FOLDER_ID"
+}
