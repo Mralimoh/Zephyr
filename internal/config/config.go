@@ -9,10 +9,13 @@ import (
 )
 
 type AppConfig struct {
-	ListenAddr string `json:"listen_addr,omitempty"`
-	ClientID string `json:"client_id,omitempty"`
-	GoogleFolderID string `json:"google_folder_id,omitempty"`
-	Transport httpclient.TransportConfig `json:"transport,omitempty"`
+	ListenAddr     string                    `json:"listen_addr,omitempty"`
+	ClientID       string                    `json:"client_id,omitempty"`
+	GoogleFolderID string                    `json:"google_folder_id,omitempty"`
+	Mode           string                    `json:"mode,omitempty"`
+	GasURL         string                    `json:"gas_url,omitempty"`
+	GasKey         string                    `json:"gas_key,omitempty"`
+	Transport      httpclient.TransportConfig `json:"transport,omitempty"`
 }
 
 func (c *AppConfig) Save(path string) error {

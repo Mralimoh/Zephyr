@@ -80,7 +80,7 @@ func main() {
 		cid = generateSessionID()[:8]
 	}
 	
-	engine := transport.NewEngine(backend, true, cid)
+	engine := transport.NewEngine(backend, true, cid, appCfg.Mode, appCfg.GasURL, appCfg.GasKey)
 	engine.Start(ctx)
 
 	listenAddr := appCfg.ListenAddr

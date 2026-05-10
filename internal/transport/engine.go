@@ -25,6 +25,10 @@ type Engine struct {
 	peerDir Direction
 	id      string
 
+	mode    string
+	gasURL  string
+	gasKey  string
+
 	sessions  map[string]*Session
 	sessionMu sync.RWMutex
 
@@ -46,10 +50,13 @@ type Engine struct {
 	zstdWriterPool sync.Pool
 }
 
-func NewEngine(store Datastore, isClient bool, clientID string) *Engine {
+func NewEngine(store Datastore, isClient bool, clientID string, mode, gasURL, gasKey string) *Engine {
 	e := &Engine{
 		store:          store,
 		id:             clientID,
+		mode:           mode,
+		gasURL:         gasURL,
+		gasKey:         gasKey,
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
@@ -180,47 +187,48 @@ func (e *Engine) flushAll(ctx context.Context) {
 			return
 		}
 
-		go func(fname string, envelopes []Envelope) {
+		go func(fname string, envelopes []Envelope, targetCID string) {
 			defer func() { <-e.txSem }()
-			delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
 
-			for i := 0; i < len(delays); i++ {
-				if delays[i] > 0 {
-					select {
-					case <-time.After(delays[i]):
-					case <-ctx.Done():
-						return
+			pr, pw := io.Pipe()
+			go func() {
+				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
+				zw.Reset(pw)
+				var encErr error
+				for _, env := range envelopes {
+					if err := env.Encode(zw); err != nil {
+						encErr = err
+						break
 					}
 				}
+				zw.Close()
+				e.zstdWriterPool.Put(zw)
+				pw.CloseWithError(encErr)
+			}()
 
-				pr, pw := io.Pipe()
-				go func() {
-					zw := e.zstdWriterPool.Get().(*zstd.Encoder)
-					zw.Reset(pw)
-					var encErr error
-					for _, env := range envelopes {
-						if err := env.Encode(zw); err != nil {
-							encErr = err
-							break
-						}
-					}
-					zw.Close()
-					e.zstdWriterPool.Put(zw)
-					pw.CloseWithError(encErr)
-				}()
-
-				err := e.store.Upload(ctx, fname, pr)
-				pr.Close()
-
-				if err == nil {
-					e.lastTxTime = time.Now()
-					return
+			var err error
+			if e.mode == "script" && e.gasURL != "" {
+				if gbe, ok := e.store.(interface {
+					UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
+				}); ok {
+					err = gbe.UploadViaGAS(ctx, e.gasURL, e.gasKey, e.id, pr)
+				} else {
+					err = e.store.Upload(ctx, fname, pr)
 				}
-				log.Printf("[Engine] Upload failed for %s (attempt %d/3): %v", fname, i+1, err)
+			} else {
+				err = e.store.Upload(ctx, fname, pr)
 			}
-			log.Printf("[Engine] Critical: Upload failed after 3 attempts. Data lost: %s", fname)
-		}(filename, mux)
+			
+			pr.Close()
+
+			if err == nil {
+				e.lastTxTime = time.Now()
+				return
+			}
+			log.Printf("[Engine] Upload failed for %s: %v", fname, err)
+		}(filename, mux, cid)
 	}
+
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
@@ -327,21 +335,12 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 		if err == nil {
 			break
 		}
-		log.Printf("[Engine] Download failed for %s (attempt %d/3): %v", fname, i+1, err)
 	}
 
 	if err != nil {
-		log.Printf("[Engine] Error: giving up on %s after 3 attempts.", fname)
 		return
 	}
 	defer rc.Close()
-
-	zr, err := zstd.NewReader(rc)
-	if err != nil {
-		log.Printf("[Engine] Error: failed to create zstd reader for %s: %v", fname, err)
-		return
-	}
-	defer zr.Close()
 
 	var fileClientID string
 	parts := strings.Split(fname, "-")
@@ -349,36 +348,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 		fileClientID = parts[1]
 	}
 
-	for {
-		var env Envelope
-		if err := env.Decode(zr); err != nil {
-			break
-		}
-
-		e.closedSessionsMu.Lock()
-		_, isClosed := e.closedSessions[env.SessionID]
-		e.closedSessionsMu.Unlock()
-		if isClosed {
-			continue
-		}
-
-		e.sessionMu.Lock()
-		s, exists := e.sessions[env.SessionID]
-		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
-			s = NewSession(ctx, env.SessionID)
-			s.ClientID = fileClientID
-			e.sessions[env.SessionID] = s
-			e.sessionMu.Unlock()
-			e.OnNewSession(env.SessionID, env.TargetAddr, s)
-		} else {
-			e.sessionMu.Unlock()
-		}
-
-		if s != nil {
-			s.ProcessRx(&env)
-		}
-	}
-
+	e.ProcessRawStream(rc, fileClientID)
 	e.store.Delete(ctx, fname)
 }
 
@@ -468,6 +438,44 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			doCleanup()
+		}
+	}
+}
+
+func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
+	zr, err := zstd.NewReader(r)
+	if err != nil {
+		return
+	}
+	defer zr.Close()
+
+	for {
+		var env Envelope
+		if err := env.Decode(zr); err != nil {
+			break
+		}
+
+		e.closedSessionsMu.Lock()
+		_, isClosed := e.closedSessions[env.SessionID]
+		e.closedSessionsMu.Unlock()
+		if isClosed {
+			continue
+		}
+
+		e.sessionMu.Lock()
+		s, exists := e.sessions[env.SessionID]
+		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
+			s = NewSession(context.Background(), env.SessionID)
+			s.ClientID = fileClientID
+			e.sessions[env.SessionID] = s
+			e.sessionMu.Unlock()
+			e.OnNewSession(env.SessionID, env.TargetAddr, s)
+		} else {
+			e.sessionMu.Unlock()
+		}
+
+		if s != nil {
+			s.ProcessRx(&env)
 		}
 	}
 }
