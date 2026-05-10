@@ -265,8 +265,6 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
-
 			prefix := string(e.peerDir) + "-"
 			if e.myDir == DirReq {
 				prefix += e.id + "-mux-"
@@ -307,7 +305,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				}
 			}
 
-			if foundNewData {
+			if foundNewData && e.mode == "script" {
 				continue
 			}
 
@@ -317,10 +315,15 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 			var sleepDur time.Duration
 			if activeSessions > 0 {
-				if isAggressiveMode {
+				if e.mode == "script" {
 					sleepDur = 20 * time.Millisecond
 				} else {
-					sleepDur = 50 * time.Millisecond
+					isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
+					if isAggressiveMode {
+						sleepDur = 20 * time.Millisecond
+					} else {
+						sleepDur = 50 * time.Millisecond
+					}
 				}
 			} else {
 				sleepDur = 1 * time.Second
