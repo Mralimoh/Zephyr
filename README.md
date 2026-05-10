@@ -65,11 +65,11 @@ go build -o bin/server ./cmd/server
 ## 🌐 تنظیم و استقرار Google Apps Script
 اگر قصد استفاده از مود سریع (`script`) را دارید، باید کد موجود در پوشه `apps_script` را در حساب گوگل خود مستقر کنید:
 
-1. به [Google Apps Script](https://script.google.com/) بروید و روی **New Project** کلیک کنید.
+۱. به [Google Apps Script](https://script.google.com/) بروید و روی **New Project** کلیک کنید.
 
-2. محتویات فایل `apps_script/Code.gs` را کپی کرده و در ادیتور گوگل پیست کنید.
+۲. محتویات فایل `apps_script/Code.gs` را کپی کرده و در ادیتور گوگل پیست کنید.
 
-3. در خط اول اسکریپت، آدرس IP سرور خود را در متغیر `SERVER_URL` جایگزین کنید:
+۳. در خط اول اسکریپت، آدرس IP سرور خود را در متغیر `SERVER_URL` جایگزین کنید:
 
    ```javascript
    const SERVER_URL = 'http://YOUR_SERVER_IP:1080/push';
