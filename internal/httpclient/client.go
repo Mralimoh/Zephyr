@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"strings"
 )
 
 type TransportConfig struct {
@@ -23,9 +24,6 @@ type hostRewriteTransport struct {
 	HostHeader string
 }
 
-if t.HostHeader != "" && req.Host == "" {
-}
-	
 func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if strings.HasPrefix(req.URL.Path, "/macros/") {
 		req.Host = req.URL.Host
