@@ -531,8 +531,9 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error {
 	u, err := url.Parse(gasURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("parsing GAS URL: %w", err)
 	}
+
 	q := u.Query()
 	q.Set("key", gasKey)
 	q.Set("id", clientID)
@@ -540,18 +541,23 @@ func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, client
 
 	req, err := http.NewRequestWithContext(ctx, "POST", u.String(), data)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating GAS request: %w", err)
 	}
+
+	req.Host = u.Host
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("GAS upload failed: %w", err)
+		return fmt.Errorf("executing GAS request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			body = []byte(fmt.Sprintf("<failed to read error body: %v>", err))
+		}
 		return fmt.Errorf("GAS returned status %d: %s", resp.StatusCode, string(body))
 	}
 
