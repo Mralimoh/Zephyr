@@ -45,7 +45,7 @@
 
 ## ۱. دریافت فایل اعتبارنامه
 
-۱. **فعال‌سازی API:** به کنسول گوگل کلاود (Google Cloud Console) بروید، یک پروژه بسازید و Google Drive API را فعال کنید.
+۱. **فعال‌سازی API:** به [Google Cloud Console](https://console.cloud.google.com/) بروید، یک پروژه بسازید و Google Drive API را فعال کنید.
 
 ۲. **تنظیم صفحه رضایت (Consent Screen):** به بخش "APIs & Services" > "OAuth consent screen" بروید. نام برنامه و ایمیل پشتیبانی را وارد کنید.
 
