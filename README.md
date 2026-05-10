@@ -78,11 +78,11 @@ go build -o bin/server ./cmd/server
 
 قابلیت "پیکربندی صفر": اگر مقدار google_folder_id را در فایل‌ها خالی ("") بگذارید، کلاینت در اولین اجرا خودش پوشه Zephyr-Data را در گوگل‌درایو شما می‌سازد و کُد آن را در فایل تنظیمات ذخیره می‌کند!
 
-سمت کلاینت (client_config.json):
-
 شما می‌توانید با تغییر مقدار mode بین دو حالت جابجا شوید:
 
-برای حالت سریع (Google Apps Script):
+برای حالت (Google Apps Script):
+
+سمت کلاینت (client_config.json):
 ```
 {
   "listen_addr": "127.0.0.1:1080",
@@ -100,6 +100,25 @@ go build -o bin/server ./cmd/server
 ```
 (اگر حالت driver را می‌خواهید، کافیست مقدار mode را به "driver" تغییر دهید).
 
+برای حالت (Google Drive):
+
+سمت کلاینت (client_config.json):
+```
+{
+  "listen_addr": "127.0.0.1:1080",
+  "mode": "driver",
+  "gas_url": "",
+  "gas_key": "",
+  "google_folder_id": "YOUR_FOLDER_ID",
+  "transport": {
+    "TargetIP": "216.239.38.120:443",
+    "SNI": "www.google.com",
+    "HostHeader": "www.googleapis.com",
+    "InsecureSkipVerify": false
+  }
+}
+```
+
 سمت سرور (server_config.json):
 
 سرور به صورت خودکار به عنوان یک «پذیرنده جامع» عمل می‌کند. فقط کافیست پورت شنود GAS و کلید امنیتی را به آن بدهید (مقدار پوشه را در ابتدا خالی بگذارید):
@@ -110,6 +129,7 @@ go build -o bin/server ./cmd/server
   "google_folder_id": ""
 }
 ```
+
 ## 🔐 احراز هویت اولیه (فقط روی سیستم شخصی)
 
 پروژه از سیستم امنیتی OAuth2 "3-Legged" استفاده می‌کند. این کار را فقط یک بار روی کامپیوتر خودتان انجام می‌دهید:
