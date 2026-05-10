@@ -82,7 +82,7 @@ go build -o bin/server ./cmd/server
 
 برای حالت (Google Apps Script):
 
-سمت کلاینت (client_config.json):
+سمت کلاینت `(client_config.json)`:
 ```
 {
   "listen_addr": "127.0.0.1:1080",
@@ -102,7 +102,7 @@ go build -o bin/server ./cmd/server
 
 برای حالت (Google Drive):
 
-سمت کلاینت (client_config.json):
+سمت کلاینت `(client_config.json)`:
 ```
 {
   "listen_addr": "127.0.0.1:1080",
@@ -119,12 +119,12 @@ go build -o bin/server ./cmd/server
 }
 ```
 
-سمت سرور (server_config.json):
+سمت سرور `(server_config.json)`:
 ```
 {
   "listen_addr": ":1080",
   "gas_key": "YOUR_GAS_KEY",
-  "google_folder_id": ""
+  "google_folder_id": "YOUR_FOLDER_ID"
 }
 ```
 
