@@ -77,8 +77,8 @@ go build -o bin/server ./cmd/server
 ۳. پیکربندی (Zero-Config)
 
 قابلیت "پیکربندی صفر": اگر مقدار google_folder_id را در فایل‌ها خالی ("") بگذارید، کلاینت در اولین اجرا خودش پوشه Zephyr-Data را در گوگل‌درایو شما می‌سازد و کُد آن را در فایل تنظیمات ذخیره می‌کند!
-سمت کلاینت (client_config.json)
 
+سمت کلاینت (client_config.json):
 شما می‌توانید با تغییر مقدار mode بین دو حالت جابجا شوید:
 
 برای حالت سریع (Google Apps Script):
