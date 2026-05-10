@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/http"
 	"time"
-	"strings"
 )
 
 type TransportConfig struct {
