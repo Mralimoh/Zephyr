@@ -62,6 +62,18 @@ go build -o bin/client ./cmd/client
 go build -o bin/server ./cmd/server
 ```
 
+## 🌐 تنظیم و استقرار Google Apps Script
+اگر قصد استفاده از مود سریع (`script`) را دارید، باید کد موجود در پوشه `apps_script` را در حساب گوگل خود مستقر کنید:
+
+1. به [Google Apps Script](https://script.google.com/) بروید و روی **New Project** کلیک کنید.
+
+2. محتویات فایل `apps_script/Code.gs` را کپی کرده و در ادیتور گوگل پیست کنید.
+
+3. در خط اول اسکریپت، آدرس IP سرور خود را در متغیر `SERVER_URL` جایگزین کنید:
+
+   ```javascript
+   const SERVER_URL = 'http://YOUR_SERVER_IP:1080/push';
+
 ۳. پیکربندی (Zero-Config)
 
 قابلیت "پیکربندی صفر": اگر مقدار google_folder_id را در فایل‌ها خالی ("") بگذارید، کلاینت در اولین اجرا خودش پوشه Zephyr-Data را در گوگل‌درایو شما می‌سازد و کُد آن را در فایل تنظیمات ذخیره می‌کند!
@@ -101,7 +113,7 @@ go build -o bin/server ./cmd/server
 
 پروژه از سیستم امنیتی OAuth2 "3-Legged" استفاده می‌کند. این کار را فقط یک بار روی کامپیوتر خودتان انجام می‌دهید:
 
-۱. کلاینت را اجرا کنید: ./bin/client -c client_config.json -gc credentials.json
+۱. کلاینت را اجرا کنید: `./bin/client -c client_config.json -gc credentials.json`
 
 ۲. یک لینک طولانی در ترمینال ظاهر می‌شود. آن را در مرورگر خود باز کنید.
 
@@ -123,6 +135,6 @@ go build -o bin/server ./cmd/server
 
 ۳. آن شناسه را کپی کرده و دقیقاً داخل server_config.json روی سرور قرار دهید.
 
-۴. سرور را اجرا کنید: ./bin/server -c server_config.json -gc credentials.json
+۴. سرور را اجرا کنید: `./bin/server -c server_config.json -gc credentials.json`
 
 ۵. سرور بلافاصله و به صورت همزمان روی درگاه GAS (پورت 1080) و درایو شروع به شنود می‌کند. کار تمام است!
