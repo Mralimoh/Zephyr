@@ -23,7 +23,15 @@ type hostRewriteTransport struct {
 	HostHeader string
 }
 
+if t.HostHeader != "" && req.Host == "" {
+}
+	
 func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.Path, "/macros/") {
+		req.Host = req.URL.Host
+		return t.Transport.RoundTrip(req)
+	}
+
 	if t.HostHeader != "" && req.Host == "" {
 		req.Host = t.HostHeader
 	}
