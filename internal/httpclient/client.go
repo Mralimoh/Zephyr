@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"strings"
 )
 
 type TransportConfig struct {
@@ -24,7 +25,9 @@ type hostRewriteTransport struct {
 }
 
 func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if t.HostHeader != "" {
+	if strings.Contains(req.URL.Host, "script.google") {
+		req.Host = req.URL.Host
+	} else if t.HostHeader != "" {
 		req.Host = t.HostHeader
 	}
 	return t.Transport.RoundTrip(req)

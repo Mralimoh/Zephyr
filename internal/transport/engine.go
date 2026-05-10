@@ -28,6 +28,7 @@ type Engine struct {
 	mode    string
 	gasURL  string
 	gasKey  string
+	ctx context.Context
 
 	sessions  map[string]*Session
 	sessionMu sync.RWMutex
@@ -102,6 +103,7 @@ func (e *Engine) makeBaseline(ctx context.Context) {
 }
 
 func (e *Engine) Start(ctx context.Context) {
+	e.ctx = ctx
 	e.makeBaseline(ctx)
 	go e.flushLoop(ctx)
 	go e.pollLoop(ctx)
@@ -116,7 +118,12 @@ func (e *Engine) AddSession(s *Session) {
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	interval := 100 * time.Millisecond
+	if e.mode == "script" {
+		interval = 500 * time.Millisecond
+	}
+	
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -150,7 +157,9 @@ func (e *Engine) flushAll(ctx context.Context) {
 		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
 		              len(s.txBuf) >= FlushThresholdBytes || 
 		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 100 * time.Millisecond)
-
+		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
+ 		   shouldSend = false
+		}
 		if !shouldSend {
 			s.mu.Unlock()
 			continue
@@ -450,6 +459,12 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 	defer zr.Close()
 
 	for {
+		select {
+		case <-e.ctx.Done():
+			return
+		default:
+		}
+
 		var env Envelope
 		if err := env.Decode(zr); err != nil {
 			break
@@ -465,7 +480,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		e.sessionMu.Lock()
 		s, exists := e.sessions[env.SessionID]
 		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
-			s = NewSession(context.Background(), env.SessionID)
+			s = NewSession(e.ctx, env.SessionID)
 			s.ClientID = fileClientID
 			e.sessions[env.SessionID] = s
 			e.sessionMu.Unlock()

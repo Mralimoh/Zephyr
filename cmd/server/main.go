@@ -68,7 +68,7 @@ func main() {
 	}
 
 	if appCfg.Mode == "script" {
-		go startGasListener(appCfg, engine)
+  	  go startGasListener(ctx, appCfg, engine)
 	}
 
 	engine.Start(ctx)
@@ -111,34 +111,39 @@ func handleServerConn(sessionID, targetAddr string, session *transport.Session, 
 	}
 }
 
-func startGasListener(cfg *config.AppConfig, engine *transport.Engine) {
+func startGasListener(ctx context.Context, cfg *config.AppConfig, engine *transport.Engine) {
 	addr := cfg.ListenAddr
 	if addr == "" {
 		addr = ":1080"
 	}
-	
-	http.HandleFunc("/push", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 
-		if cfg.GasKey != "" && r.Header.Get("X-Gas-Key") != cfg.GasKey {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		clientID := r.Header.Get("X-Client-ID")
-		
-		limitedReader := io.LimitReader(r.Body, 5*1024*1024)
-		
-		engine.ProcessRawStream(limitedReader, clientID)
-		
-		w.WriteHeader(http.StatusOK)
-	})
-
-	log.Printf("[GAS-Listener] Starting HTTP server on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("GAS Listener failed: %v", err)
+	srv := &http.Server{
+		Addr: addr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if cfg.GasKey != "" && r.Header.Get("X-Gas-Key") != cfg.GasKey {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			
+			clientID := r.Header.Get("X-Client-ID")
+			engine.ProcessRawStream(io.LimitReader(r.Body, 5*1024*1024), clientID)
+			w.WriteHeader(http.StatusOK)
+		}),
 	}
+
+	go func() {
+		log.Printf("[GAS-Listener] Starting on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("GAS Listener closed: %v", err)
+		}
+	}()
+
+	go func() {
+		<-ctx.Done()
+		srv.Close()
+	}()
 }
