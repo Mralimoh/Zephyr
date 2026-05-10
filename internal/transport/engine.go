@@ -154,12 +154,14 @@ func (e *Engine) flushAll(ctx context.Context) {
 			s.closed = true
 		}
 		
-		shouldSend := s.closed || (s.txSeq == 0 && e.myDir == DirReq) || 
+		shouldSend := s.closed || 
 		              len(s.txBuf) >= FlushThresholdBytes || 
-		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 100 * time.Millisecond)
+		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 100*time.Millisecond)
+
 		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
- 		   shouldSend = false
+			shouldSend = false
 		}
+
 		if !shouldSend {
 			s.mu.Unlock()
 			continue
@@ -178,7 +180,9 @@ func (e *Engine) flushAll(ctx context.Context) {
 		}
 
 		cid := s.ClientID
-		if cid == "" && e.myDir == DirReq { cid = e.id }
+		if cid == "" && e.myDir == DirReq {
+			cid = e.id
+		}
 		muxes[cid] = append(muxes[cid], env)
 
 		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
@@ -198,43 +202,55 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 		go func(fname string, envelopes []Envelope, targetCID string) {
 			defer func() { <-e.txSem }()
+			delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
 
-			pr, pw := io.Pipe()
-			go func() {
-				zw := e.zstdWriterPool.Get().(*zstd.Encoder)
-				zw.Reset(pw)
-				var encErr error
-				for _, env := range envelopes {
-					if err := env.Encode(zw); err != nil {
-						encErr = err
-						break
+			for i := 0; i < len(delays); i++ {
+				if delays[i] > 0 {
+					select {
+					case <-time.After(delays[i]):
+					case <-ctx.Done():
+						return
 					}
 				}
-				zw.Close()
-				e.zstdWriterPool.Put(zw)
-				pw.CloseWithError(encErr)
-			}()
 
-			var err error
-			if e.mode == "script" && e.gasURL != "" {
-				if gbe, ok := e.store.(interface {
-					UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
-				}); ok {
-					err = gbe.UploadViaGAS(ctx, e.gasURL, e.gasKey, e.id, pr)
+				pr, pw := io.Pipe()
+				go func() {
+					zw := e.zstdWriterPool.Get().(*zstd.Encoder)
+					zw.Reset(pw)
+					var encErr error
+					for _, env := range envelopes {
+						if err := env.Encode(zw); err != nil {
+							encErr = err
+							break
+						}
+					}
+					zw.Close()
+					e.zstdWriterPool.Put(zw)
+					pw.CloseWithError(encErr)
+				}()
+
+				var err error
+				if e.mode == "script" && e.gasURL != "" && e.myDir == DirReq {
+					if gbe, ok := e.store.(interface {
+						UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
+					}); ok {
+						err = gbe.UploadViaGAS(ctx, e.gasURL, e.gasKey, e.id, pr)
+					} else {
+						err = e.store.Upload(ctx, fname, pr)
+					}
 				} else {
 					err = e.store.Upload(ctx, fname, pr)
 				}
-			} else {
-				err = e.store.Upload(ctx, fname, pr)
-			}
-			
-			pr.Close()
+				
+				pr.Close()
 
-			if err == nil {
-				e.lastTxTime = time.Now()
-				return
+				if err == nil {
+					e.lastTxTime = time.Now()
+					return
+				}
+				log.Printf("[Engine] Upload failed for %s (attempt %d/3): %v", fname, i+1, err)
 			}
-			log.Printf("[Engine] Upload failed for %s: %v", fname, err)
+			log.Printf("[Engine] Critical: Upload failed after 3 attempts. Data lost: %s", fname)
 		}(filename, mux, cid)
 	}
 
