@@ -46,7 +46,9 @@
 ## ۱. دریافت فایل اعتبارنامه (یک بار برای همیشه)
 ۱. به [Google Cloud Console](https://console.cloud.google.com/) بروید و یک پروژه بسازید. از بخش "Library"، سرویس **Google Drive API** را فعال کنید.
 
-۲. به بخش "OAuth consent screen" بروید. نام برنامه را وارد کنید. **بسیار مهم:** برای جلوگیری از انقضای ۷ روزه توکن، حتماً روی دکمه **"Publish App"** کلیک کنید.
+۲. به بخش "OAuth consent screen" بروید. نام برنامه را وارد کنید.
+
+**بسیار مهم:** برای جلوگیری از انقضای ۷ روزه توکن، حتماً روی دکمه **"Publish App"** کلیک کنید.
 
 ۳. به بخش "Credentials" > "Create Credentials" > "OAuth client ID" بروید. نوع برنامه را **Desktop App** انتخاب کنید.
 
