@@ -128,7 +128,7 @@ go build -o bin/server ./cmd/server
   "google_folder_id": "YOUR_FOLDER_ID"
 }
 ```
-استفاده از چندین اسکریپت :
+استفاده از چندین اسکریپت آیدی :
 ```
 {
   "gas_ids": [
