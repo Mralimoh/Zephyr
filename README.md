@@ -87,7 +87,7 @@ go build -o bin/server ./cmd/server
   "listen_addr": "127.0.0.1:1080",
   "mode": "script",
   "gas_ids": [
-    "YOUR_SCRIPT_ID_1"
+    "YOUR_SCRIPT_ID"
   ],
   "gas_key": "YOUR_GAS_KEY",
   "google_folder_id": "",
