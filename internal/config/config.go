@@ -13,7 +13,7 @@ type AppConfig struct {
 	ClientID       string                    `json:"client_id,omitempty"`
 	GoogleFolderID string                    `json:"google_folder_id,omitempty"`
 	Mode           string                    `json:"mode,omitempty"`
-	GasURL         string                    `json:"gas_url,omitempty"`
+	GasIDs         []string                  `json:"gas_ids,omitempty"`
 	GasKey         string                    `json:"gas_key,omitempty"`
 	Transport      httpclient.TransportConfig `json:"transport,omitempty"`
 }

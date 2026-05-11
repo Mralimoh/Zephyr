@@ -60,7 +60,7 @@ func main() {
 		}
 	}
 
-	engine := transport.NewEngine(backend, false, "", appCfg.Mode, appCfg.GasURL, appCfg.GasKey)
+	engine := transport.NewEngine(backend, false, "", appCfg.Mode, appCfg.GasIDs, appCfg.GasKey)
 
 	engine.OnNewSession = func(sessionID, targetAddr string, session *transport.Session) {
 		log.Printf("Server received new session %s destined for %s", sessionID, targetAddr)

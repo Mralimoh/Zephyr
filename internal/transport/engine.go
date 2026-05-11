@@ -3,11 +3,12 @@ package transport
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
-	"io"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -25,10 +26,11 @@ type Engine struct {
 	peerDir Direction
 	id      string
 
-	mode    string
-	gasURL  string
-	gasKey  string
-	ctx context.Context
+	mode       string
+	gasIDs     []string
+	gasKey     string
+	gasRRIndex uint32
+	ctx        context.Context
 
 	sessions  map[string]*Session
 	sessionMu sync.RWMutex
@@ -51,12 +53,12 @@ type Engine struct {
 	zstdWriterPool sync.Pool
 }
 
-func NewEngine(store Datastore, isClient bool, clientID string, mode, gasURL, gasKey string) *Engine {
+func NewEngine(store Datastore, isClient bool, clientID string, mode string, gasIDs []string, gasKey string) *Engine {
 	e := &Engine{
 		store:          store,
 		id:             clientID,
 		mode:           mode,
-		gasURL:         gasURL,
+		gasIDs:         gasIDs,
 		gasKey:         gasKey,
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
@@ -230,11 +232,15 @@ func (e *Engine) flushAll(ctx context.Context) {
 				}()
 
 				var err error
-				if e.mode == "script" && e.gasURL != "" && e.myDir == DirReq {
+				if e.mode == "script" && len(e.gasIDs) > 0 && e.myDir == DirReq {
+					idx := atomic.AddUint32(&e.gasRRIndex, 1)
+					selectedID := e.gasIDs[idx%uint32(len(e.gasIDs))]
+					selectedURL := fmt.Sprintf("https://script.google.com/macros/s/%s/exec", selectedID)
+
 					if gbe, ok := e.store.(interface {
 						UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
 					}); ok {
-						err = gbe.UploadViaGAS(ctx, e.gasURL, e.gasKey, e.id, pr)
+						err = gbe.UploadViaGAS(ctx, selectedURL, e.gasKey, e.id, pr)
 					} else {
 						err = e.store.Upload(ctx, fname, pr)
 					}

@@ -86,7 +86,10 @@ go build -o bin/server ./cmd/server
 {
   "listen_addr": "127.0.0.1:1080",
   "mode": "script",
-  "gas_url": "YOUR_SCRIPT_URL",
+  "gas_ids": [
+    "YOUR_SCRIPT_ID_1",
+    "YOUR_SCRIPT_ID_2"
+  ],
   "gas_key": "YOUR_GAS_KEY",
   "google_folder_id": "",
   "transport": {
@@ -106,7 +109,7 @@ go build -o bin/server ./cmd/server
 {
   "listen_addr": "127.0.0.1:1080",
   "mode": "driver",
-  "gas_url": "",
+  "gas_ids": [],
   "gas_key": "",
   "google_folder_id": "YOUR_FOLDER_ID",
   "transport": {
