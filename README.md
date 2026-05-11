@@ -129,6 +129,15 @@ go build -o bin/server ./cmd/server
   "google_folder_id": "YOUR_FOLDER_ID"
 }
 ```
+استفاده از چندین اسکریپت:
+```
+{
+  "gas_ids": [
+    "YOUR_SCRIPT_ID_1",
+    "YOUR_SCRIPT_ID_2"
+  ]
+}
+```
 
 ## 🔐 احراز هویت اولیه (فقط روی سیستم شخصی)
 
