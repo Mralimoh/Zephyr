@@ -554,11 +554,7 @@ func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, client
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			body = []byte(fmt.Sprintf("<failed to read error body: %v>", err))
-		}
-		return fmt.Errorf("GAS returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("GAS status %d", resp.StatusCode)
 	}
 
 	return nil

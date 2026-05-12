@@ -251,12 +251,19 @@ func (e *Engine) flushAll(ctx context.Context) {
 				pr.Close()
 
 				if err == nil {
+					if i > 0 {
+						log.Printf("[Engine] Upload FIXED for %s (retry %d)", fname, i)
+					}
 					e.lastTxTime = time.Now()
 					return
 				}
-				log.Printf("[Engine] Upload failed for %s (attempt %d/3): %v", fname, i+1, err)
+
+				if i < len(delays)-1 {
+					log.Printf("[Engine] Upload FAILED (%v). Retrying %d/3...", err, i+1)
+				} else {
+					log.Printf("[Engine] CRITICAL: Final failure for %s: %v", fname, err)
+				}
 			}
-			log.Printf("[Engine] Critical: Upload failed after 3 attempts. Data lost: %s", fname)
 		}(filename, mux, cid)
 	}
 
