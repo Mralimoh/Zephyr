@@ -262,7 +262,6 @@ func (e *Engine) flushAll(ctx context.Context) {
 					log.Printf("[Engine] Retrying sync for %s (%d/3)", fname, i+1)
 				} else {
 					log.Printf("[Engine] Sync failed for %s: %v", fname, err)
-}
 				}
 			}
 		}(filename, mux, cid)
