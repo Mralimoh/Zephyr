@@ -259,7 +259,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 				}
 
 				if i < len(delays)-1 {
-					log.Printf("[Engine] Retrying sync for %s (%d/3)", fname, i+1)
+					log.Printf("[Engine] Retrying sync for %s", fname)
 				} else {
 					log.Printf("[Engine] Sync failed for %s: %v", fname, err)
 				}
