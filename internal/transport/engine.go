@@ -122,7 +122,7 @@ func (e *Engine) AddSession(s *Session) {
 func (e *Engine) flushLoop(ctx context.Context) {
 	interval := 100 * time.Millisecond
 	if e.mode == "script" {
-		interval = 500 * time.Millisecond
+		interval = 150 * time.Millisecond
 	}
 	
 	ticker := time.NewTicker(interval)
@@ -252,16 +252,17 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 				if err == nil {
 					if i > 0 {
-						log.Printf("[Engine] Upload FIXED for %s (retry %d)", fname, i)
+						log.Printf("[Engine] Synced %s", fname)
 					}
 					e.lastTxTime = time.Now()
 					return
 				}
 
 				if i < len(delays)-1 {
-					log.Printf("[Engine] Upload FAILED (%v). Retrying %d/3...", err, i+1)
+					log.Printf("[Engine] Retrying sync for %s (%d/3)", fname, i+1)
 				} else {
-					log.Printf("[Engine] CRITICAL: Final failure for %s: %v", fname, err)
+					log.Printf("[Engine] Sync failed for %s: %v", fname, err)
+}
 				}
 			}
 		}(filename, mux, cid)
