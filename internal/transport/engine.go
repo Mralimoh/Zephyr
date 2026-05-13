@@ -251,17 +251,12 @@ func (e *Engine) flushAll(ctx context.Context) {
 				pr.Close()
 
 				if err == nil {
-					if i > 0 {
-						log.Printf("[Engine] Synced %s", fname)
-					}
 					e.lastTxTime = time.Now()
 					return
 				}
 
-				if i < len(delays)-1 {
-					log.Printf("[Engine] Retrying sync for %s", fname)
-				} else {
-					log.Printf("[Engine] Sync failed for %s: %v", fname, err)
+				if i == len(delays)-1 {
+					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays), err)
 				}
 			}
 		}(filename, mux, cid)

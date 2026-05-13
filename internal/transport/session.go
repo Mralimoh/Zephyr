@@ -36,6 +36,8 @@ type Session struct {
 
 	Ctx    context.Context
 	cancel context.CancelFunc
+
+	rxStallTime time.Time
 }
 
 func NewSession(ctx context.Context, id string) *Session {
@@ -108,6 +110,15 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
+	if !s.rxStallTime.IsZero() && time.Since(s.rxStallTime) > 25*time.Second {
+		s.rxClosed = true
+		s.closed = true
+		s.cancel()
+		s.rxCond.Broadcast()
+		s.txCond.Broadcast()
+		return
+	}
+
 	if len(s.rxBuf) > 16*1024*1024 {
 		s.rxClosed = true
 		s.closed = true
@@ -159,6 +170,11 @@ func (s *Session) ProcessRx(env *Envelope) {
 				break
 			}
 		}
+
+		if len(s.rxQueue) == 0 {
+			s.rxStallTime = time.Time{}
+		}
+
 	} else if env.Seq > s.rxSeq {
 		if env.Seq-s.rxSeq > 1024 {
 			s.rxClosed = true
@@ -169,5 +185,9 @@ func (s *Session) ProcessRx(env *Envelope) {
 			return
 		}
 		s.rxQueue[env.Seq] = env
+
+		if s.rxStallTime.IsZero() {
+			s.rxStallTime = time.Now()
+		}
 	}
 }
