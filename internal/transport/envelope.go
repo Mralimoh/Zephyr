@@ -33,7 +33,8 @@ func (e *Envelope) Encode(w io.Writer) error {
 	}
 
 	headerSize := 1 + 1 + len(e.SessionID) + 8 + 1 + len(e.TargetAddr) + 1 + 4
-	hdr := make([]byte, headerSize)
+	var hdrBuf [512]byte
+	hdr := hdrBuf[:headerSize]
 	
 	hdr[0] = MagicByte
 	hdr[1] = uint8(len(e.SessionID))
