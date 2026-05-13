@@ -256,7 +256,10 @@ func (e *Engine) flushAll(ctx context.Context) {
 				}
 
 				if i == len(delays)-1 {
-					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays), err)
+					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays), len(envelopes), err)
+					for _, env := range envelopes {
+						e.RemoveSession(env.SessionID)
+					}
 				}
 			}
 		}(filename, mux, cid)
