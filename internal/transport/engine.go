@@ -51,6 +51,7 @@ type Engine struct {
 	lastTxTime time.Time
 
 	zstdWriterPool sync.Pool
+	zstdReaderPool sync.Pool
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string, mode string, gasIDs []string, gasKey string) *Engine {
@@ -74,6 +75,14 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 			log.Fatalf("Critical: failed to initialize zstd writer: %v", err)
 		}
 		return zw
+	}
+
+	e.zstdReaderPool.New = func() any {
+		zr, err := zstd.NewReader(nil)
+		if err != nil {
+			log.Fatalf("Critical: failed to initialize zstd reader: %v", err)
+		}
+		return zr
 	}
 
 	if isClient {
@@ -482,11 +491,12 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 }
 
 func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
-	zr, err := zstd.NewReader(r)
-	if err != nil {
+	zr := e.zstdReaderPool.Get().(*zstd.Decoder)
+	if err := zr.Reset(r); err != nil {
+		e.zstdReaderPool.Put(zr)
 		return
 	}
-	defer zr.Close()
+	defer e.zstdReaderPool.Put(zr)
 
 	for {
 		select {
