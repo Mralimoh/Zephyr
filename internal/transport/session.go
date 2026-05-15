@@ -46,8 +46,8 @@ func NewSession(ctx context.Context, id string) *Session {
 		ID:           id,
 		rxQueue:      make(map[uint64]*Envelope),
 		lastActivity: time.Now(),
-		txBuf:        make([]byte, 0, FlushThresholdBytes*2),
-		rxBuf:        make([]byte, 0, FlushThresholdBytes*2),
+		txBuf:        make([]byte, 0, 4096),
+		rxBuf:        make([]byte, 0, 4096),
 		Ctx:          sessionCtx,
 		cancel:       cancel,
 	}
@@ -176,7 +176,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 		}
 
 	} else if env.Seq > s.rxSeq {
-		if env.Seq-s.rxSeq > 1024 {
+		if env.Seq-s.rxSeq > 32 {
 			s.rxClosed = true
 			s.closed = true
 			s.cancel()

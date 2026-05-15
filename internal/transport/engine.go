@@ -70,7 +70,10 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.zstdWriterPool.New = func() any {
-		zw, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		zw, err := zstd.NewWriter(nil, 
+			zstd.WithEncoderLevel(zstd.SpeedFastest),
+			zstd.WithEncoderConcurrency(1),
+		)
 		if err != nil {
 			log.Fatalf("Critical: failed to initialize zstd writer: %v", err)
 		}
@@ -78,7 +81,9 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.zstdReaderPool.New = func() any {
-		zr, err := zstd.NewReader(nil)
+		zr, err := zstd.NewReader(nil,
+			zstd.WithDecoderConcurrency(1),
+		)
 		if err != nil {
 			log.Fatalf("Critical: failed to initialize zstd reader: %v", err)
 		}
@@ -196,7 +201,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
-		s.txBuf = make([]byte, 0, FlushThresholdBytes*2)
+		s.txBuf = make([]byte, 0, 4096)
 		s.txSeq++
 		s.txCond.Broadcast()
 		s.mu.Unlock()
@@ -336,17 +341,17 @@ func (e *Engine) pollLoop(ctx context.Context) {
 			var sleepDur time.Duration
 			if activeSessions > 0 {
 				if e.mode == "script" {
-					sleepDur = 20 * time.Millisecond
+					sleepDur = 100 * time.Millisecond
 				} else {
 					isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
 					if isAggressiveMode {
-						sleepDur = 20 * time.Millisecond
+						sleepDur = 100 * time.Millisecond
 					} else {
-						sleepDur = 50 * time.Millisecond
+						sleepDur = 150 * time.Millisecond
 					}
 				}
 			} else {
-				sleepDur = 1 * time.Second
+				sleepDur = 2 * time.Second
 			}
 
 			select {
