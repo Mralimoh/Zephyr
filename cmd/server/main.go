@@ -128,7 +128,7 @@ func startGasListener(ctx context.Context, cfg *config.AppConfig, engine *transp
 			}
 			
 			clientID := r.Header.Get("X-Client-ID")
-			engine.ProcessRawStream(io.LimitReader(r.Body, 5*1024*1024), clientID)
+			engine.ProcessRawStream(io.LimitReader(r.Body, 20*1024*1024), clientID)
 			w.WriteHeader(http.StatusOK)
 		}),
 	}

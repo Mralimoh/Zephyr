@@ -48,7 +48,7 @@ type Engine struct {
 	processedIdx  int
 	processedMu   sync.Mutex
 
-	lastTxTime time.Time
+	lastTxTime int64
 
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
@@ -167,7 +167,12 @@ func (e *Engine) flushAll(ctx context.Context) {
 	for _, s := range sessions {
 		s.mu.Lock()
 		if time.Since(s.lastActivity) > 60*time.Second {
-			s.closed = true
+			if !s.closed {
+				s.closed = true
+				s.cancel()
+				s.txCond.Broadcast()
+				s.rxCond.Broadcast()
+			}
 		}
 		
 		shouldSend := s.closed || 
@@ -265,7 +270,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 				pr.Close()
 
 				if err == nil {
-					e.lastTxTime = time.Now()
+					atomic.StoreInt64(&e.lastTxTime, time.Now().UnixNano())
 					return
 				}
 
@@ -343,7 +348,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				if e.mode == "script" {
 					sleepDur = 100 * time.Millisecond
 				} else {
-					isAggressiveMode := time.Since(e.lastTxTime) < 2*time.Second
+					isAggressiveMode := (time.Now().UnixNano() - atomic.LoadInt64(&e.lastTxTime)) < int64(2*time.Second)
 					if isAggressiveMode {
 						sleepDur = 100 * time.Millisecond
 					} else {

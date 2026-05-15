@@ -18,7 +18,7 @@ const (
 	MagicByte = 0x1F
 	MaxSessionIDLen = 64
 	MaxAddrLen      = 255
-	MaxPayloadLen   = 5 * 1024 * 1024
+	MaxPayloadLen   = 10 * 1024 * 1024
 )
 
 func (e *Envelope) Encode(w io.Writer) error {

@@ -266,6 +266,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
+		pr.Close()
 		return fmt.Errorf("creating http request: %w", err)
 	}
 	
@@ -279,6 +280,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 	
@@ -335,6 +337,8 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
 		return nil, err
 	}
+	
+	io.Copy(io.Discard, resp.Body)
 
 	b.fileIdsMu.Lock()
 	var names []string
@@ -422,6 +426,8 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete returned %d: %s", resp.StatusCode, string(body))
 	}
+
+	io.Copy(io.Discard, resp.Body)
 
 	b.fileIdsMu.Lock()
 	delete(b.fileIDs, filename)
@@ -556,6 +562,8 @@ func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, client
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GAS status %d", resp.StatusCode)
 	}
+
+	io.Copy(io.Discard, resp.Body)
 
 	return nil
 }
