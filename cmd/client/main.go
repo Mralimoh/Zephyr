@@ -3,19 +3,17 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
+	"sync"
+	"encoding/binary"
+	"fmt"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -41,13 +39,6 @@ func main() {
 	log.Println("Starting Zephyr Client...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	go func() {
-		log.Println("Profiler listening on http://127.0.0.1:6060/debug/pprof")
-		if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
-			log.Printf("Profiler server closed: %v", err)
-		}
-	}()
 
 	appCfg, err := config.Load(configPath)
 	if err != nil {
