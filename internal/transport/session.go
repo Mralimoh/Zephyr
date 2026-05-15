@@ -13,7 +13,7 @@ const (
 	DirReq Direction = "req"
 	DirRes Direction = "res"
 
-	FlushThresholdBytes = 1024 * 1024
+	FlushThresholdBytes = 256 * 1024
 )
 
 type Session struct {
@@ -84,7 +84,7 @@ func (s *Session) EnqueueTx(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for len(s.txBuf) > 8*1024*1024 && !s.closed {
+	for len(s.txBuf) > 512*1024 && !s.closed {
 		s.txCond.Wait()
 	}
 
@@ -119,7 +119,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	for len(s.rxBuf) > 16*1024*1024 && !s.closed {
+	for len(s.rxBuf) > 2*1024*1024 && !s.closed {
 		s.rxCond.Wait()
 	}
 	if s.closed {
@@ -142,7 +142,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
-				for len(s.rxBuf) > 16*1024*1024 && !s.closed {
+				for len(s.rxBuf) > 2*1024*1024 && !s.closed {
 					s.rxCond.Wait()
 				}
 				if s.closed {
