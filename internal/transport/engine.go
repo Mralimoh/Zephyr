@@ -290,10 +290,12 @@ func (e *Engine) flushAll(ctx context.Context) {
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
-	const numWorkers = 3
+	const numWorkers = 5
+	const staggerInterval = 30 * time.Millisecond
+
 	for i := 0; i < numWorkers; i++ {
 		go func(workerID int) {
-			time.Sleep(time.Duration(workerID * 40) * time.Millisecond)
+			time.Sleep(time.Duration(workerID) * staggerInterval)
 
 			for {
 				select {
@@ -307,7 +309,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 					e.sessionMu.RUnlock()
 
 					if activeSessions > 0 {
-						time.Sleep(100 * time.Millisecond)
+						time.Sleep(120 * time.Millisecond) 
 					} else {
 						time.Sleep(2 * time.Second)
 					}
