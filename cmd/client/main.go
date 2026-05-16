@@ -14,8 +14,6 @@ import (
 	"sync"
 	"encoding/binary"
 	"fmt"
-	"net/http"
-	_ "net/http/pprof"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -33,9 +31,6 @@ func generateSessionID() string {
 }
 
 func main() {
-	go func() {
-		log.Println(http.ListenAndServe("127.0.0.1:6060", nil))
-	}()
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
