@@ -290,81 +290,72 @@ func (e *Engine) flushAll(ctx context.Context) {
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			prefix := string(e.peerDir) + "-"
-			if e.myDir == DirReq {
-				prefix += e.id + "-mux-"
-			}
+	const numWorkers = 3
+	for i := 0; i < numWorkers; i++ {
+		go func(workerID int) {
+			time.Sleep(time.Duration(workerID * 40) * time.Millisecond)
 
-			files, _ := e.store.ListQuery(ctx, prefix)
-			foundNewData := false
-			if len(files) > 0 {
-				var newFiles []string
-				e.processedMu.Lock()
-				for _, f := range files {
-					if !e.processed[f] {
-						oldest := e.processedRing[e.processedIdx]
-						if oldest != "" {
-							delete(e.processed, oldest)
-						}
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					e.executePoll(ctx)
 
-						e.processed[f] = true
-						e.processedRing[e.processedIdx] = f
-						e.processedIdx = (e.processedIdx + 1) % 120
+					e.sessionMu.RLock()
+					activeSessions := len(e.sessions)
+					e.sessionMu.RUnlock()
 
-						newFiles = append(newFiles, f)
-						foundNewData = true
-					}
-				}
-				e.processedMu.Unlock()
-
-				if len(newFiles) > 0 {
-					var wg sync.WaitGroup
-					for _, f := range newFiles {
-						wg.Add(1)
-						go func(fname string) {
-							defer wg.Done()
-							e.processFile(ctx, fname)
-						}(f)
-					}
-					wg.Wait()
-				}
-			}
-
-			if foundNewData && e.mode == "script" {
-				continue
-			}
-
-			e.sessionMu.RLock()
-			activeSessions := len(e.sessions)
-			e.sessionMu.RUnlock()
-
-			var sleepDur time.Duration
-			if activeSessions > 0 {
-				if e.mode == "script" {
-					sleepDur = 100 * time.Millisecond
-				} else {
-					isAggressiveMode := (time.Now().UnixNano() - atomic.LoadInt64(&e.lastTxTime)) < int64(2*time.Second)
-					if isAggressiveMode {
-						sleepDur = 100 * time.Millisecond
+					if activeSessions > 0 {
+						time.Sleep(100 * time.Millisecond)
 					} else {
-						sleepDur = 150 * time.Millisecond
+						time.Sleep(2 * time.Second)
 					}
 				}
-			} else {
-				sleepDur = 2 * time.Second
+			}
+		}(i)
+	}
+}
+
+func (e *Engine) executePoll(ctx context.Context) {
+	prefix := string(e.peerDir) + "-"
+	if e.myDir == DirReq {
+		prefix += e.id + "-mux-"
+	}
+
+	files, _ := e.store.ListQuery(ctx, prefix)
+	if len(files) == 0 {
+		return
+	}
+
+	var newFiles []string
+	e.processedMu.Lock()
+	for _, f := range files {
+		if !e.processed[f] {
+			oldest := e.processedRing[e.processedIdx]
+			if oldest != "" {
+				delete(e.processed, oldest)
 			}
 
-			select {
-			case <-time.After(sleepDur):
-			case <-ctx.Done():
-				return
-			}
+			e.processed[f] = true
+			e.processedRing[e.processedIdx] = f
+			e.processedIdx = (e.processedIdx + 1) % 120
+
+			newFiles = append(newFiles, f)
 		}
+	}
+	e.processedMu.Unlock()
+
+	if len(newFiles) > 0 {
+		var wg sync.WaitGroup
+		for _, f := range newFiles {
+			wg.Add(1)
+			go func(fname string) {
+				defer wg.Done()
+				e.processFile(ctx, fname)
+			}(f)
+		}
+		wg.Wait()
 	}
 }
 
