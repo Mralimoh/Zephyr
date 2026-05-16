@@ -405,12 +405,10 @@ func (e *Engine) RemoveSession(id string) {
 	e.sessionMu.Lock()
 	s, exists := e.sessions[id]
 	delete(e.sessions, id)
-	currentCount := len(e.sessions)
 	e.sessionMu.Unlock()
 
 	if exists && s != nil {
 		s.cancel()
-		log.Printf("Engine.RemSession: Ended session %s (Total now: %d)", id, currentCount)
 	}
 
 	e.closedSessionsMu.Lock()
