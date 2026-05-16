@@ -134,26 +134,41 @@ func (e *Engine) AddSession(s *Session) {
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
-	interval := 100 * time.Millisecond
-	if e.mode == "script" {
-		interval = 150 * time.Millisecond
-	}
-	
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			e.flushAll(context.Background())
 			return
-		case <-ticker.C:
-			e.flushAll(ctx)
+		default:
+			sentSomething := e.flushAll(ctx)
+
+			e.sessionMu.RLock()
+			activeSessions := len(e.sessions)
+			e.sessionMu.RUnlock()
+
+			var sleepDur time.Duration
+			if sentSomething {
+				sleepDur = 20 * time.Millisecond
+			} else if activeSessions > 0 {
+				if e.mode == "script" {
+					sleepDur = 100 * time.Millisecond
+				} else {
+					sleepDur = 50 * time.Millisecond
+				}
+			} else {
+				sleepDur = 1 * time.Second
+			}
+
+			select {
+			case <-time.After(sleepDur):
+			case <-ctx.Done():
+				return
+			}
 		}
 	}
 }
 
-func (e *Engine) flushAll(ctx context.Context) {
+func (e *Engine) flushAll(ctx context.Context) bool {
 	e.sessionMu.Lock()
 	sessions := make([]*Session, 0, len(e.sessions))
 	for _, s := range e.sessions {
@@ -167,7 +182,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 	for _, s := range sessions {
 		s.mu.Lock()
 		if time.Since(s.lastActivity) > 60*time.Second {
-				if !s.closed {
+			if !s.closed {
 				s.closed = true
 				s.cancel()
 				s.txCond.Broadcast()
@@ -287,6 +302,8 @@ func (e *Engine) flushAll(ctx context.Context) {
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
+	
+	return len(muxes) > 0
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
@@ -396,7 +413,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 
 	e.ProcessRawStream(rc, fileClientID)
-	e.store.Delete(ctx, fname)
+	go e.store.Delete(context.Background(), fname)
 }
 
 func (e *Engine) RemoveSession(id string) {
@@ -426,7 +443,7 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 		}
 		e.closedSessionsMu.Unlock()
 
-		prefixes :=[]string{string(e.myDir) + "-"}
+		prefixes := []string{string(e.myDir) + "-"}
 		currentSeenInStore := make(map[string]bool)
 
 		for _, pref := range prefixes {
@@ -458,11 +475,12 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 				if firstSeen, exists := seenFiles[f]; !exists {
 					seenFiles[f] = time.Now()
 				} else if time.Since(firstSeen) > 2*time.Minute {
-					if err := e.store.Delete(ctx, f); err != nil {
-						log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", f, err)
-					} else {
-						delete(seenFiles, f)
-					}
+					go func(fileToDelete string) {
+						if err := e.store.Delete(context.Background(), fileToDelete); err != nil {
+							log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", fileToDelete, err)
+						}
+					}(f)
+					delete(seenFiles, f)
 				}
 			}
 		}
