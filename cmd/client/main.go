@@ -3,17 +3,18 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"syscall"
+	"strings"
 	"sync"
-	"encoding/binary"
-	"fmt"
+	"syscall"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -116,6 +117,17 @@ func main() {
 	)
 
 	log.Printf("Listening for SOCKS5 on %s...", listenAddr)
+	if strings.HasPrefix(listenAddr, "127.0.0.1") || strings.HasPrefix(listenAddr, "localhost") {
+		log.Println("[Warning] Bound to localhost. Change listen_addr to 0.0.0.0 for external access.")
+	} else {
+		ips := getLocalIPs()
+		if len(ips) > 0 {
+			log.Println("Available IPs for external connections:")
+			for _, ip := range ips {
+				log.Printf(" %s", ip)
+			}
+		}
+	}
 
 	go func() {
 		if err := server.ListenAndServe("tcp", listenAddr); err != nil {
@@ -186,4 +198,32 @@ type rawResolver struct {
 func (r rawResolver) Resolve(ctx context.Context, name string) (context.Context, net.IP, error) {
 	fakeIP := r.fdns.GetIP(name)
 	return ctx, fakeIP, nil
+}
+
+func getLocalIPs() []string {
+	var ips []string
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ips
+	}
+
+	for _, i := range ifaces {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := i.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipnet.IP.To4() != nil {
+					ips = append(ips, fmt.Sprintf("[%s] -> %s", i.Name, ipnet.IP.String()))
+				}
+			}
+		}
+	}
+	return ips
 }
