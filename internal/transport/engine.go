@@ -166,7 +166,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 	for _, s := range sessions {
 		s.mu.Lock()
-		if time.Since(s.lastActivity) > 60*time.Second {
+		if time.Since(s.lastActivity) > 30*time.Second {
 			if !s.closed {
 				s.closed = true
 				s.cancel()
@@ -405,10 +405,12 @@ func (e *Engine) RemoveSession(id string) {
 	e.sessionMu.Lock()
 	s, exists := e.sessions[id]
 	delete(e.sessions, id)
+	currentCount := len(e.sessions)
 	e.sessionMu.Unlock()
 
 	if exists && s != nil {
 		s.cancel()
+		log.Printf("Engine.RemoveSession: Session %s removed. (Remaining: %d)", id, currentCount)
 	}
 
 	e.closedSessionsMu.Lock()
