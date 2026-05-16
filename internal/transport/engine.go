@@ -166,8 +166,8 @@ func (e *Engine) flushAll(ctx context.Context) {
 
 	for _, s := range sessions {
 		s.mu.Lock()
-		if time.Since(s.lastActivity) > 30*time.Second {
-			if !s.closed {
+		if time.Since(s.lastActivity) > 60*time.Second {
+				if !s.closed {
 				s.closed = true
 				s.cancel()
 				s.txCond.Broadcast()
@@ -215,14 +215,14 @@ func (e *Engine) flushAll(ctx context.Context) {
 	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
 		
-		select {
-		case e.txSem <- struct{}{}:
-		case <-ctx.Done():
-			return
-		}
-
 		go func(fname string, envelopes []Envelope, targetCID string) {
+			select {
+			case e.txSem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-e.txSem }()
+
 			delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
 
 			for i := 0; i < len(delays); i++ {
@@ -275,7 +275,7 @@ func (e *Engine) flushAll(ctx context.Context) {
 				}
 
 				if i == len(delays)-1 {
-					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays), len(envelopes), err)
+					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays))
 					for _, env := range envelopes {
 						e.RemoveSession(env.SessionID)
 					}
@@ -349,15 +349,11 @@ func (e *Engine) executePoll(ctx context.Context) {
 	e.processedMu.Unlock()
 
 	if len(newFiles) > 0 {
-		var wg sync.WaitGroup
 		for _, f := range newFiles {
-			wg.Add(1)
 			go func(fname string) {
-				defer wg.Done()
 				e.processFile(ctx, fname)
 			}(f)
 		}
-		wg.Wait()
 	}
 }
 
