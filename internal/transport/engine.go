@@ -410,7 +410,7 @@ func (e *Engine) RemoveSession(id string) {
 
 	if exists && s != nil {
 		s.cancel()
-		log.Printf("Engine.RemoveSession: Session %s removed. (Remaining: %d)", id, currentCount)
+		log.Printf("Engine.RemSession: Ended session %s (Total now: %d)", id, currentCount)
 	}
 
 	e.closedSessionsMu.Lock()
