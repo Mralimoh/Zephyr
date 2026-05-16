@@ -118,7 +118,7 @@ func main() {
 
 	log.Printf("Listening for SOCKS5 on %s...", listenAddr)
 	if strings.HasPrefix(listenAddr, "127.0.0.1") || strings.HasPrefix(listenAddr, "localhost") {
-		log.Println("[Warning] Bound to localhost. Change listen_addr to 0.0.0.0 for external access.")
+		log.Println("Change listen_addr to 0.0.0.0 for external access.")
 	} else {
 		ips := getLocalIPs()
 		if len(ips) > 0 {
