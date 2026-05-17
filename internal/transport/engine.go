@@ -382,7 +382,7 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 	defer func() { <-e.rxSem }()
 
-	delays := []time.Duration{0, 100 * time.Millisecond, 250 * time.Millisecond}
+	delays := []time.Duration{0, 1 * time.Second, 2 * time.Second, 5 * time.Second}
 	var rc io.ReadCloser
 	var err error
 

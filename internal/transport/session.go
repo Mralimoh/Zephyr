@@ -119,9 +119,6 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	for len(s.rxBuf) > 2*1024*1024 && !s.closed {
-		s.rxCond.Wait()
-	}
 	if s.closed {
 		return
 	}
@@ -142,9 +139,6 @@ func (s *Session) ProcessRx(env *Envelope) {
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
-				for len(s.rxBuf) > 2*1024*1024 && !s.closed {
-					s.rxCond.Wait()
-				}
 				if s.closed {
 					return
 				}
