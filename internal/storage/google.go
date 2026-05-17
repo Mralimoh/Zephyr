@@ -204,6 +204,7 @@ func (b *GoogleBackend) getValidToken(ctx context.Context) (string, error) {
 
 	if time.Now().After(b.tokenEx) {
 		if err := b.refreshAccessToken(ctx); err != nil {
+			b.tokenEx = time.Now().Add(5 * time.Second)
 			return "", err
 		}
 	}
