@@ -64,7 +64,7 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 		sessions:       make(map[string]*Session),
 		closedSessions: make(map[string]time.Time),
 		processed:      make(map[string]bool),
-		processedRing:  make([]string, 256),
+		processedRing:  make([]string, 1024),
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
 	}
@@ -354,7 +354,7 @@ func (e *Engine) executePoll(ctx context.Context) {
 
 			e.processed[f] = true
 			e.processedRing[e.processedIdx] = f
-			e.processedIdx = (e.processedIdx + 1) % 256
+			e.processedIdx = (e.processedIdx + 1) % 1024
 
 			newFiles = append(newFiles, f)
 		}
