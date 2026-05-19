@@ -177,16 +177,10 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 	for _, s := range sessions {
 		s.mu.Lock()
-		if time.Since(s.lastActivity) > 60*time.Second {
-			if !s.closed {
-				s.closed = true
-				s.cancel()
-				s.txCond.Broadcast()
-				s.rxCond.Broadcast()
-			}
-		}
-		
-		shouldSend := s.closed || 
+
+		isPriority := s.closed || s.TargetAddr != ""
+
+		shouldSend := isPriority || 
 		              len(s.txBuf) >= FlushThresholdBytes || 
 		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
 
@@ -219,6 +213,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 		s.txBuf = make([]byte, 0, 4096)
 		s.txSeq++
+		s.TargetAddr = "" 
 		s.txCond.Broadcast()
 		s.mu.Unlock()
 	}
@@ -321,10 +316,20 @@ func (e *Engine) pollLoop(ctx context.Context) {
 					activeSessions := len(e.sessions)
 					e.sessionMu.RUnlock()
 
-					if activeSessions > 0 {
-						time.Sleep(130 * time.Millisecond) 
+					lastTx := atomic.LoadInt64(&e.lastTxTime)
+					isBurst := time.Since(time.Unix(0, lastTx)) < 10*time.Second
+
+					var sleepDur time.Duration
+					if activeSessions > 0 || isBurst {
+						sleepDur = 100 * time.Millisecond
 					} else {
-						time.Sleep(2 * time.Second)
+						sleepDur = 2 * time.Second
+					}
+
+					select {
+					case <-time.After(sleepDur):
+					case <-ctx.Done():
+						return
 					}
 				}
 			}
