@@ -310,18 +310,17 @@ func (e *Engine) pollLoop(ctx context.Context) {
 				case <-ctx.Done():
 					return
 				default:
-					e.executePoll(ctx)
+					foundFiles := e.executePoll(ctx)
 
 					e.sessionMu.RLock()
 					activeSessions := len(e.sessions)
 					e.sessionMu.RUnlock()
 
-					lastTx := atomic.LoadInt64(&e.lastTxTime)
-					isBurst := time.Since(time.Unix(0, lastTx)) < 10*time.Second
-
 					var sleepDur time.Duration
-					if activeSessions > 0 || isBurst {
-						sleepDur = 100 * time.Millisecond
+					if foundFiles {
+						sleepDur = 10 * time.Millisecond
+					} else if activeSessions > 0 {
+						sleepDur = 250 * time.Millisecond
 					} else {
 						sleepDur = 2 * time.Second
 					}
@@ -337,7 +336,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 	}
 }
 
-func (e *Engine) executePoll(ctx context.Context) {
+func (e *Engine) executePoll(ctx context.Context) bool {
 	prefix := string(e.peerDir) + "-"
 	if e.myDir == DirReq {
 		prefix += e.id + "-mux-"
@@ -345,7 +344,7 @@ func (e *Engine) executePoll(ctx context.Context) {
 
 	files, _ := e.store.ListQuery(ctx, prefix)
 	if len(files) == 0 {
-		return
+		return false
 	}
 
 	var newFiles []string
@@ -372,7 +371,10 @@ func (e *Engine) executePoll(ctx context.Context) {
 				e.processFile(ctx, fname)
 			}(f)
 		}
+		return true
 	}
+	
+	return false
 }
 
 func (e *Engine) processFile(ctx context.Context, fname string) {
