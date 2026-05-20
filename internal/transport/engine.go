@@ -48,8 +48,6 @@ type Engine struct {
 	processedIdx  int
 	processedMu   sync.Mutex
 
-	lastTxTime int64
-
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
 }
@@ -276,7 +274,6 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				pr.Close()
 
 				if err == nil {
-					atomic.StoreInt64(&e.lastTxTime, time.Now().UnixNano())
 					return
 				}
 
