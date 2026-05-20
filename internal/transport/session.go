@@ -123,14 +123,6 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	for len(s.rxBuf) > 5*1024*1024 && !s.closed && !s.rxClosed {
-		s.rxCond.Wait()
-	}
-
-	if s.closed || s.rxClosed {
-		return
-	}
-
 	if env.Seq == s.rxSeq {
 		if len(env.Payload) > 0 {
 			s.rxBuf = append(s.rxBuf, env.Payload...)
