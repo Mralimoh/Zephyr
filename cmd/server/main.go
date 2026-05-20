@@ -6,10 +6,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"net/http"
+	"time"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -116,7 +117,11 @@ func startGasListener(ctx context.Context, cfg *config.AppConfig, engine *transp
 	}
 
 	srv := &http.Server{
-		Addr: addr,
+		Addr:              addr,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

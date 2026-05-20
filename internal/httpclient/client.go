@@ -30,7 +30,7 @@ func (t *hostRewriteTransport) RoundTrip(req *http.Request) (*http.Response, err
 		return t.Transport.RoundTrip(req)
 	}
 
-	if t.HostHeader != "" && req.Host == "" {
+	if t.HostHeader != "" {
 		req.Host = t.HostHeader
 	}
 	
