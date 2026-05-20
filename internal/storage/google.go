@@ -228,6 +228,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	}
 
 	pr, pw := io.Pipe()
+	defer pr.Close()
 	mw := multipart.NewWriter(pw)
 
 	go func() {
@@ -267,7 +268,6 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
-		pr.Close()
 		return fmt.Errorf("creating http request: %w", err)
 	}
 	
