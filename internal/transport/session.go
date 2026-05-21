@@ -119,14 +119,10 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	if s.closed || s.rxClosed {
-		return
-	}
-
 	if env.Seq == s.rxSeq {
 		if len(env.Payload) > 0 {
 			s.rxBuf = append(s.rxBuf, env.Payload...)
-			s.rxCond.Broadcast()
+			s.rxCond.Signal()
 		}
 		s.rxSeq++
 		if env.Close {
@@ -142,10 +138,9 @@ func (s *Session) ProcessRx(env *Envelope) {
 				if s.closed {
 					return
 				}
-
 				if len(nextEnv.Payload) > 0 {
 					s.rxBuf = append(s.rxBuf, nextEnv.Payload...)
-					s.rxCond.Broadcast()
+					s.rxCond.Signal()
 				}
 				delete(s.rxQueue, s.rxSeq)
 				s.rxSeq++

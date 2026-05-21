@@ -224,7 +224,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		s.txBuf = make([]byte, 0, 4096)
 		s.txSeq++
 		s.TargetAddr = "" 
-		s.txCond.Broadcast()
+		s.txCond.Signal() // جراحی نهایی: بیدار کردنِ فقط یک نویسنده
 		s.mu.Unlock()
 	}
 
@@ -270,7 +270,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				if e.mode == "script" && len(e.gasIDs) > 0 && e.myDir == DirReq {
 					idx := atomic.AddUint32(&e.gasRRIndex, 1)
 					selectedID := e.gasIDs[idx%uint32(len(e.gasIDs))]
-					selectedURL := fmt.Sprintf("https://script.google.com/macros/s/%s/exec", selectedID)
+					selectedURL := "https://script.google.com/macros/s/" + selectedID + "/exec"
 
 					if gbe, ok := e.store.(interface {
 						UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
@@ -291,7 +291,6 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				}
 
 				if i == len(delays)-1 {
-					log.Printf("[Engine] Upload permanently failed for %s after %d attempts.", fname, len(delays))
 					for _, env := range envelopes {
 						e.RemoveSession(env.SessionID)
 					}
