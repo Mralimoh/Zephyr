@@ -217,15 +217,13 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		return fmt.Errorf("getting valid token for upload: %w", err)
 	}
 
-	meta := map[string]interface{}{"name": filename}
+	var metaStr string
 	if b.folderID != "" {
-		meta["parents"] = []string{b.folderID}
+		metaStr = `{"name":"` + filename + `","parents":["` + b.folderID + `"]}`
+	} else {
+		metaStr = `{"name":"` + filename + `"}`
 	}
-	
-	metaBytes, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("marshaling upload metadata: %w", err)
-	}
+	metaBytes := []byte(metaStr)
 
 	pr, pw := io.Pipe()
 	mw := multipart.NewWriter(pw)
@@ -289,11 +287,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		return nil
 	}
 	
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		body = []byte(fmt.Sprintf("<failed to read error body: %v>", err))
-	}
-	
+	body, _ := io.ReadAll(resp.Body)
 	return fmt.Errorf("upload rejected with status %d: %s", resp.StatusCode, string(body))
 }
 
@@ -303,20 +297,14 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 		return nil, err
 	}
 
-	q := fmt.Sprintf("name contains '%s' and trashed = false", prefix)
+	q := "name contains '" + prefix + "' and trashed = false"
 	if b.folderID != "" {
-		q += fmt.Sprintf(" and '%s' in parents", b.folderID)
+		q += " and '" + b.folderID + "' in parents"
 	}
 
-	u, _ := url.Parse("https://www.googleapis.com/drive/v3/files")
-	v := u.Query()
-	v.Set("q", q)
-	v.Set("spaces", "drive")
-	v.Set("orderBy", "createdTime asc")
-	v.Set("fields", "files(id, name)")
-	u.RawQuery = v.Encode()
+	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&fields=files(id,name)&q=" + url.QueryEscape(q)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +368,8 @@ func (b *GoogleBackend) Download(ctx context.Context, filename string) (io.ReadC
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/drive/v3/files/"+fileID+"?alt=media", nil)
+	reqURL := "https://www.googleapis.com/drive/v3/files/" + fileID + "?alt=media"
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -414,8 +403,8 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 		return err
 	}
 
-	u := fmt.Sprintf("https://www.googleapis.com/drive/v3/files/%s", fileID)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", u, nil)
+	reqURL := "https://www.googleapis.com/drive/v3/files/" + fileID
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return err
 	}
@@ -540,22 +529,24 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 }
 
 func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error {
-	u, err := url.Parse(gasURL)
-	if err != nil {
-		return fmt.Errorf("parsing GAS URL: %w", err)
-	}
+	reqURL := gasURL + "?key=" + gasKey + "&id=" + clientID
 
-	q := u.Query()
-	q.Set("key", gasKey)
-	q.Set("id", clientID)
-	u.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, "POST", u.String(), data)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, data)
 	if err != nil {
 		return fmt.Errorf("creating GAS request: %w", err)
 	}
 
-	req.Host = u.Host
+	host := ""
+	if strings.HasPrefix(gasURL, "https://") {
+		host = gasURL[8:]
+	} else if strings.HasPrefix(gasURL, "http://") {
+		host = gasURL[7:]
+	}
+	if idx := strings.IndexByte(host, '/'); idx != -1 {
+		host = host[:idx]
+	}
+
+	req.Host = host
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	resp, err := b.httpClient.Do(req)
@@ -569,6 +560,5 @@ func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, client
 	}
 
 	io.Copy(io.Discard, resp.Body)
-
 	return nil
 }
