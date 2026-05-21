@@ -266,7 +266,7 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		}
 	}()
 
-	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
 		pr.Close()
@@ -441,17 +441,14 @@ func (b *GoogleBackend) CreateFolder(ctx context.Context, name string) (string, 
 		return "", err
 	}
 
-	meta := map[string]interface{}{
-		"name":     name,
-		"mimeType": "application/vnd.google-apps.folder",
-	}
+	metaStr := `{"name":"` + name + `","mimeType":"application/vnd.google-apps.folder"}`
 	if b.folderID != "" {
-		meta["parents"] = []string{b.folderID}
+		metaStr = `{"name":"` + name + `","mimeType":"application/vnd.google-apps.folder","parents":["` + b.folderID + `"]}`
 	}
-	body, _ := json.Marshal(meta)
 
-	u := "https://www.googleapis.com/drive/v3/files?fields=id"
-	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(body))
+	reqURL := "https://www.googleapis.com/drive/v3/files?fields=id"
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(metaStr))
 	if err != nil {
 		return "", err
 	}
@@ -486,16 +483,11 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 		return "", err
 	}
 
-	q := fmt.Sprintf("name = '%s' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", name)
+	q := "name = '" + name + "' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
 	
-	u, _ := url.Parse("https://www.googleapis.com/drive/v3/files")
-	v := u.Query()
-	v.Set("q", q)
-	v.Set("spaces", "drive")
-	v.Set("fields", "files(id)")
-	u.RawQuery = v.Encode()
+	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&fields=files(id)&q=" + url.QueryEscape(q)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return "", err
 	}
