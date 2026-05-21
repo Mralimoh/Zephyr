@@ -36,8 +36,6 @@ func main() {
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
 	flag.Parse()
-
-	log.Println("Starting Zephyr Client...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -45,6 +43,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	displayMode := appCfg.Mode
+	if displayMode == "" {
+		displayMode = "drive (default)"
+	}
+	log.Printf("Starting Zephyr Client [Mode: %s]...", displayMode)
 
 	customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
 	backend := storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)

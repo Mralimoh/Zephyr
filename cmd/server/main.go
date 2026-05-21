@@ -22,8 +22,6 @@ func main() {
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
 	flag.Parse()
-
-	log.Println("Starting Zephyr Server...")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -31,6 +29,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+
+	log.Printf("Starting Zephyr Server [Dual-RX, Drive-TX]...")
 
 	customHttpClient := httpclient.NewCustomClient(appCfg.Transport)
 	backend := storage.NewGoogleBackend(customHttpClient, gcPath, appCfg.GoogleFolderID)
