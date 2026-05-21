@@ -419,7 +419,12 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 
 	e.ProcessRawStream(rc, fileClientID)
-	go e.store.Delete(context.Background(), fname)
+	
+	go func(f string) {
+		dCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_ = e.store.Delete(dCtx, f)
+	}(fname)
 }
 
 func (e *Engine) RemoveSession(id string) {
