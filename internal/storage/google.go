@@ -234,7 +234,11 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		var goroutineErr error
 		defer func() {
 			mw.Close()
-			pw.CloseWithError(goroutineErr)
+			if goroutineErr == nil {
+				pw.Close()
+			} else {
+				pw.CloseWithError(goroutineErr)
+			}
 		}()
 
 		h := make(textproto.MIMEHeader)
