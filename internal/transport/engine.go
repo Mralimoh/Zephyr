@@ -134,6 +134,12 @@ func (e *Engine) AddSession(s *Session) {
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
+	t := time.NewTimer(time.Second)
+	if !t.Stop() {
+		<-t.C
+	}
+	defer t.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,8 +161,9 @@ func (e *Engine) flushLoop(ctx context.Context) {
 				sleepDur = 1 * time.Second
 			}
 
+			t.Reset(sleepDur)
 			select {
-			case <-time.After(sleepDur):
+			case <-t.C:
 			case <-ctx.Done():
 				return
 			}
@@ -308,6 +315,12 @@ func (e *Engine) pollLoop(ctx context.Context) {
 		go func(workerID int) {
 			time.Sleep(time.Duration(workerID) * staggerInterval)
 
+			t := time.NewTimer(time.Second)
+			if !t.Stop() {
+				<-t.C
+			}
+			defer t.Stop()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -328,8 +341,9 @@ func (e *Engine) pollLoop(ctx context.Context) {
 						sleepDur = 2 * time.Second
 					}
 
+					t.Reset(sleepDur)
 					select {
-					case <-time.After(sleepDur):
+					case <-t.C:
 					case <-ctx.Done():
 						return
 					}
