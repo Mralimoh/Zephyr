@@ -29,19 +29,14 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 		v.session.rxCond.Wait()
 	}
 
-	if len(v.session.rxBuf) > 0 {
-		n = copy(b, v.session.rxBuf)
-		v.session.rxBuf = v.session.rxBuf[n:]
+	n = copy(b, v.session.rxBuf)
+	v.session.rxBuf = v.session.rxBuf[n:]
 
-		if len(v.session.rxBuf) == 0 {
-			v.session.rxBuf = v.session.rxBuf[:0]
-		}
-		
-		v.session.rxCond.Broadcast()
-		return n, nil
+	if len(v.session.rxBuf) == 0 {
+		v.session.rxBuf = nil 
 	}
-
-	return 0, io.EOF
+	
+	return n, nil
 }
 
 func (v *VirtualConn) Write(b []byte) (n int, err error) {
