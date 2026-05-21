@@ -6,10 +6,12 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"sync"
 	"syscall"
-	"net/http"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
@@ -17,7 +19,15 @@ import (
 	"Zephyr/internal/transport"
 )
 
+var copyBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 32*1024)
+		return &b
+	},
+}
+
 func main() {
+	debug.SetGCPercent(300)
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
@@ -94,12 +104,16 @@ func handleServerConn(sessionID, targetAddr string, session *transport.Session, 
 	errCh := make(chan error, 2)
 
 	go func() {
-		_, err := io.Copy(conn, vConn)
+		buf := copyBufPool.Get().(*[]byte)
+		defer copyBufPool.Put(buf)
+		_, err := io.CopyBuffer(conn, vConn, *buf)
 		errCh <- err
 	}()
 
 	go func() {
-		_, err := io.Copy(vConn, conn)
+		buf := copyBufPool.Get().(*[]byte)
+		defer copyBufPool.Put(buf)
+		_, err := io.CopyBuffer(vConn, conn, *buf)
 		errCh <- err
 	}()
 
