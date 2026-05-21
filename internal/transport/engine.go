@@ -185,7 +185,8 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
 
 		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
-			shouldSend = false
+			s.mu.Unlock()
+			continue
 		}
 
 		if !shouldSend {
@@ -193,10 +194,12 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			continue
 		}
 
+		currentPayload := s.txBuf
+		
 		env := Envelope{
 			SessionID:  s.ID,
 			Seq:        s.txSeq,
-			Payload:    s.txBuf,
+			Payload:    currentPayload,
 			Close:      s.closed,
 			TargetAddr: s.TargetAddr,
 		}
