@@ -119,14 +119,6 @@ func (s *Session) ProcessRx(env *Envelope) {
 		return
 	}
 
-	if s.closed {
-		return
-	}
-
-	for len(s.rxBuf) > 5*1024*1024 && !s.closed && !s.rxClosed {
-		s.rxCond.Wait()
-	}
-
 	if s.closed || s.rxClosed {
 		return
 	}

@@ -34,7 +34,7 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 		v.session.rxBuf = v.session.rxBuf[n:]
 
 		if len(v.session.rxBuf) == 0 {
-			v.session.rxBuf = nil
+			v.session.rxBuf = v.session.rxBuf[:0]
 		}
 		
 		v.session.rxCond.Broadcast()
