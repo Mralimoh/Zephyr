@@ -16,8 +16,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"net/http"
-	_ "net/http/pprof"
 
 	"Zephyr/internal/config"
 	"Zephyr/internal/httpclient"
