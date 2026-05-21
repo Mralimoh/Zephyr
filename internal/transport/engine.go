@@ -48,6 +48,8 @@ type Engine struct {
 	processedIdx  int
 	processedMu   sync.Mutex
 
+	lastTxTime int64
+
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
 }
@@ -274,6 +276,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				pr.Close()
 
 				if err == nil {
+					atomic.StoreInt64(&e.lastTxTime, time.Now().UnixNano())
 					return
 				}
 
@@ -402,9 +405,6 @@ func (e *Engine) processFile(ctx context.Context, fname string) {
 	}
 
 	if err != nil {
-		e.processedMu.Lock()
-		delete(e.processed, fname)
-		e.processedMu.Unlock()
 		return
 	}
 	defer rc.Close()
@@ -438,27 +438,6 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 	seenFiles := make(map[string]time.Time)
 
 	doCleanup := func() {
-		e.sessionMu.RLock()
-		sessionsCopy := make([]*Session, 0, len(e.sessions))
-		for _, s := range e.sessions {
-			sessionsCopy = append(sessionsCopy, s)
-		}
-		e.sessionMu.RUnlock()
-
-		var deadIDs []string
-		for _, s := range sessionsCopy {
-			s.mu.Lock()
-			isIdle := time.Since(s.lastActivity) > 10*time.Minute
-			s.mu.Unlock()
-			if isIdle {
-				deadIDs = append(deadIDs, s.ID)
-			}
-		}
-
-		for _, id := range deadIDs {
-			e.RemoveSession(id)
-		}
-
 		e.closedSessionsMu.Lock()
 		for id, t := range e.closedSessions {
 			if time.Since(t) > 1*time.Minute {

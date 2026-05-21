@@ -31,13 +31,12 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 
 	if len(v.session.rxBuf) > 0 {
 		n = copy(b, v.session.rxBuf)
-		
-		if n == len(v.session.rxBuf) {
-			v.session.rxBuf = v.session.rxBuf[:0]
-		} else {
-			v.session.rxBuf = v.session.rxBuf[n:]
-		}
+		v.session.rxBuf = v.session.rxBuf[n:]
 
+		if len(v.session.rxBuf) == 0 {
+			v.session.rxBuf = nil
+		}
+		
 		v.session.rxCond.Broadcast()
 		return n, nil
 	}
