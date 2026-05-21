@@ -36,13 +36,6 @@ func generateSessionID() string {
 
 func main() {
 	debug.SetGCPercent(300)
-/////////////////
-	go func() {
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			log.Printf("Pprof server failed: %v", err)
-		}
-	}()
-/////////////////
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
