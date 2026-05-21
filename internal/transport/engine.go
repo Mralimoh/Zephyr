@@ -487,9 +487,9 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 					seenFiles[f] = time.Now()
 				} else if time.Since(firstSeen) > 2*time.Minute {
 					go func(fileToDelete string) {
-						if err := e.store.Delete(context.Background(), fileToDelete); err != nil {
-							log.Printf("[Engine] Cleanup: failed to delete old file %s: %v", fileToDelete, err)
-						}
+						dCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+						defer cancel()
+						_ = e.store.Delete(dCtx, fileToDelete)
 					}(f)
 					delete(seenFiles, f)
 				}
