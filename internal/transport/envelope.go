@@ -55,7 +55,9 @@ func (e *Envelope) Encode(w io.Writer) error {
 		return err
 	}
 	if len(e.Payload) > 0 {
-		_, err := w.Write(e.Payload)
+		if _, err := w.Write(e.Payload); err != nil {
+			return err
+		}
 	}
 	return nil
 }
