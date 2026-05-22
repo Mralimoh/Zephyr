@@ -57,7 +57,7 @@ func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBacke
 		saPath:      saPath,
 		folderID:    folderID,
 		fileIDs:     make(map[string]string),
-		fileIDsRing: make([]string, 1024),
+		fileIDsRing: make([]string, 128),
 	}
 }
 
@@ -343,7 +343,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 				}
 				b.fileIDs[f.Name] = f.ID
 				b.fileIDsRing[b.fileIDsIdx] = f.Name
-				b.fileIDsIdx = (b.fileIDsIdx + 1) % 1024
+				b.fileIDsIdx = (b.fileIDsIdx + 1) % 128
 			}
 			names = append(names, f.Name)
 		}
