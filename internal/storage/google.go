@@ -302,7 +302,6 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	}
 
 	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&fields=files(id,name)&q=" + url.QueryEscape(q)
-
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
@@ -313,7 +312,10 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -329,8 +331,6 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
 		return nil, err
 	}
-	
-	io.Copy(io.Discard, resp.Body)
 
 	b.fileIdsMu.Lock()
 	var names []string

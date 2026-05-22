@@ -75,6 +75,9 @@ func (s *Session) Close() {
 	}
 
 	s.closed = true
+	s.txBuf = nil
+	s.rxBuf = nil
+	s.rxQueue = nil
 	s.cancel()
 	s.txCond.Broadcast()
 	s.rxCond.Broadcast()

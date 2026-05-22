@@ -459,6 +459,15 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 	seenFiles := make(map[string]time.Time)
 
 	doCleanup := func() {
+		e.sessionMu.Lock()
+		for id, s := range e.sessions {
+			if s.closed || time.Since(s.lastActivity) > 5*time.Minute {
+				s.Close()
+				delete(e.sessions, id)
+			}
+		}
+		e.sessionMu.Unlock()
+
 		e.closedSessionsMu.Lock()
 		for id, t := range e.closedSessions {
 			if time.Since(t) > 1*time.Minute {
