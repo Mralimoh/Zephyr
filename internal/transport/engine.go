@@ -221,10 +221,10 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
-		s.txBuf = make([]byte, 0, 4096)
+		s.txBuf = make([]byte, 0, FlushThresholdBytes)
 		s.txSeq++
 		s.TargetAddr = "" 
-		s.txCond.Signal() // جراحی نهایی: بیدار کردنِ فقط یک نویسنده
+		s.txCond.Signal()
 		s.mu.Unlock()
 	}
 
