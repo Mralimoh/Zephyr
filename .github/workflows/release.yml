@@ -41,8 +41,8 @@ jobs:
               SUFFIX=".exe"
             fi
             
-            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o $FOLDER_NAME/zephyr-client$SUFFIX ./cmd/client
-            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -o $FOLDER_NAME/zephyr-server$SUFFIX ./cmd/server
+            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o $FOLDER_NAME/zephyr-client$SUFFIX ./cmd/client
+            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -ldflags="-s -w" -o $FOLDER_NAME/zephyr-server$SUFFIX ./cmd/server
             
             [ -f client_config.json.example ] && cp client_config.json.example $FOLDER_NAME/
             [ -f server_config.json.example ] && cp server_config.json.example $FOLDER_NAME/
