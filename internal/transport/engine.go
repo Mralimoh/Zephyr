@@ -52,6 +52,7 @@ type Engine struct {
 
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
+	txBufPool      sync.Pool
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string, mode string, gasIDs []string, gasKey string) *Engine {
@@ -88,6 +89,11 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 			log.Fatalf("Critical: failed to initialize zstd reader: %v", err)
 		}
 		return zr
+	}
+
+	e.txBufPool.New = func() any {
+		b := make([]byte, 0, FlushThresholdBytes)
+		return &b
 	}
 
 	if isClient {
@@ -217,7 +223,9 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
-		s.txBuf = make([]byte, 0, FlushThresholdBytes)
+		newBufPtr := e.txBufPool.Get().(*[]byte)
+		s.txBuf = (*newBufPtr)[:0]
+		
 		s.txSeq++
 		s.TargetAddr = "" 
 		s.txCond.Signal() 
@@ -230,6 +238,15 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		go func(fname string, envelopes []Envelope, targetCID string) {
 			upCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
 			defer cancel()
+
+			defer func() {
+				for i := range envelopes {
+					if envelopes[i].Payload != nil {
+						buf := envelopes[i].Payload
+						e.txBufPool.Put(&buf)
+					}
+				}
+			}()
 
 			select {
 			case e.txSem <- struct{}{}:
