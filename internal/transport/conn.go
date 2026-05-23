@@ -22,20 +22,27 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 	v.session.mu.Lock()
 	defer v.session.mu.Unlock()
 
-	for len(v.session.rxBuf) == 0 {
+	for len(v.session.rxChunks) == 0 {
 		if v.session.closed || v.session.rxClosed {
 			return 0, io.EOF
 		}
 		v.session.rxCond.Wait()
 	}
 
-	n = copy(b, v.session.rxBuf)
-	v.session.rxBuf = v.session.rxBuf[n:]
+	chunk := v.session.rxChunks[0]
+	n = copy(b, chunk)
 
-	if len(v.session.rxBuf) == 0 {
-		v.session.rxBuf = nil 
+	if n == len(chunk) {
+		v.session.rxChunks[0] = nil 
+		v.session.rxChunks = v.session.rxChunks[1:]
+		
+		if len(v.session.rxChunks) == 0 && cap(v.session.rxChunks) > 64 {
+			v.session.rxChunks = make([][]byte, 0, 16)
+		}
+	} else {
+		v.session.rxChunks[0] = chunk[n:]
 	}
-	
+
 	return n, nil
 }
 

@@ -31,7 +31,7 @@ type Session struct {
 	ClientID     string
 
 	txCond *sync.Cond
-	rxBuf  []byte
+	rxChunks [][]byte
 	rxCond *sync.Cond
 
 	Ctx    context.Context
@@ -46,8 +46,8 @@ func NewSession(ctx context.Context, id string) *Session {
 		ID:           id,
 		rxQueue:      make(map[uint64]*Envelope),
 		lastActivity: time.Now(),
-		txBuf:        make([]byte, 0, 4096),
-		rxBuf:        make([]byte, 0, 4096),
+		txBuf:        make([]byte, 0, FlushThresholdBytes),
+		rxChunks:     make([][]byte, 0, 16),
 		Ctx:          sessionCtx,
 		cancel:       cancel,
 	}
@@ -76,7 +76,7 @@ func (s *Session) Close() {
 
 	s.closed = true
 	s.txBuf = nil
-	s.rxBuf = nil
+	s.rxChunks = nil
 	s.rxQueue = nil
 	s.cancel()
 	s.txCond.Broadcast()
@@ -124,7 +124,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 
 	if env.Seq == s.rxSeq {
 		if len(env.Payload) > 0 {
-			s.rxBuf = append(s.rxBuf, env.Payload...)
+			s.rxChunks = append(s.rxChunks, env.Payload)
 			s.rxCond.Signal()
 		}
 		s.rxSeq++
@@ -142,7 +142,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 					return
 				}
 				if len(nextEnv.Payload) > 0 {
-					s.rxBuf = append(s.rxBuf, nextEnv.Payload...)
+					s.rxChunks = append(s.rxChunks, nextEnv.Payload)
 					s.rxCond.Signal()
 				}
 				delete(s.rxQueue, s.rxSeq)
