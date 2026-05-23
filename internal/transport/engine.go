@@ -551,7 +551,11 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		e.zstdReaderPool.Put(zr)
 		return
 	}
-	defer e.zstdReaderPool.Put(zr)
+	
+	defer func() {
+		zr.Reset(nil)
+		e.zstdReaderPool.Put(zr)
+	}()
 
 	for {
 		select {
