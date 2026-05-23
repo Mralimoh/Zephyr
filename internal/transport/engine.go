@@ -184,9 +184,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 	for _, s := range sessions {
 		s.mu.Lock()
-
 		isPriority := s.closed || s.TargetAddr != ""
-
 		shouldSend := isPriority || 
 		              len(s.txBuf) >= FlushThresholdBytes || 
 		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
@@ -201,12 +199,10 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			continue
 		}
 
-		currentPayload := s.txBuf
-		
 		env := Envelope{
 			SessionID:  s.ID,
 			Seq:        s.txSeq,
-			Payload:    currentPayload,
+			Payload:    s.txBuf,
 			Close:      s.closed,
 			TargetAddr: s.TargetAddr,
 		}
@@ -224,7 +220,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		s.txBuf = make([]byte, 0, FlushThresholdBytes)
 		s.txSeq++
 		s.TargetAddr = "" 
-		s.txCond.Signal()
+		s.txCond.Signal() 
 		s.mu.Unlock()
 	}
 
@@ -232,9 +228,12 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
 		
 		go func(fname string, envelopes []Envelope, targetCID string) {
+			upCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
+			defer cancel()
+
 			select {
 			case e.txSem <- struct{}{}:
-			case <-ctx.Done():
+			case <-upCtx.Done():
 				return
 			}
 			defer func() { <-e.txSem }()
@@ -245,7 +244,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				if delays[i] > 0 {
 					select {
 					case <-time.After(delays[i]):
-					case <-ctx.Done():
+					case <-upCtx.Done():
 						return
 					}
 				}
@@ -275,12 +274,12 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 					if gbe, ok := e.store.(interface {
 						UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error
 					}); ok {
-						err = gbe.UploadViaGAS(ctx, selectedURL, e.gasKey, e.id, pr)
+						err = gbe.UploadViaGAS(upCtx, selectedURL, e.gasKey, e.id, pr)
 					} else {
-						err = e.store.Upload(ctx, fname, pr)
+						err = e.store.Upload(upCtx, fname, pr)
 					}
 				} else {
-					err = e.store.Upload(ctx, fname, pr)
+					err = e.store.Upload(upCtx, fname, pr)
 				}
 				
 				pr.Close()
@@ -358,7 +357,10 @@ func (e *Engine) executePoll(ctx context.Context) bool {
 		prefix += e.id + "-mux-"
 	}
 
-	files, _ := e.store.ListQuery(ctx, prefix)
+	listCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	files, _ := e.store.ListQuery(listCtx, prefix)
+	cancel()
+
 	if len(files) == 0 {
 		return false
 	}
@@ -486,7 +488,10 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 			default:
 			}
 
-			files, err := e.store.ListQuery(ctx, pref)
+			cCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			files, err := e.store.ListQuery(cCtx, pref)
+			cancel()
+			
 			if err != nil {
 				continue
 			}
@@ -509,8 +514,8 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 					seenFiles[f] = time.Now()
 				} else if time.Since(firstSeen) > 2*time.Minute {
 					go func(fileToDelete string) {
-						dCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-						defer cancel()
+						dCtx, dCancel := context.WithTimeout(context.Background(), 20*time.Second)
+						defer dCancel()
 						_ = e.store.Delete(dCtx, fileToDelete)
 					}(f)
 					delete(seenFiles, f)

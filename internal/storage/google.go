@@ -163,6 +163,8 @@ func (b *GoogleBackend) refreshAccessToken(ctx context.Context) error {
 }
 
 func (b *GoogleBackend) executeTokenRequest(ctx context.Context, v url.Values) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", b.tokenURI, strings.NewReader(v.Encode()))
 	if err != nil {
 		return err
@@ -291,6 +293,8 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 }
 
 func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	tok, err := b.getValidToken(ctx)
 	if err != nil {
 		return nil, err
@@ -354,6 +358,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 }
 
 func (b *GoogleBackend) Download(ctx context.Context, filename string) (io.ReadCloser, error) {
+	ctx, _ = context.WithTimeout(ctx, 60*time.Second)
 	b.fileIdsMu.RLock()
 	fileID, ok := b.fileIDs[filename]
 	b.fileIdsMu.RUnlock()
@@ -389,6 +394,8 @@ func (b *GoogleBackend) Download(ctx context.Context, filename string) (io.ReadC
 }
 
 func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	b.fileIdsMu.RLock()
 	fileID, ok := b.fileIDs[filename]
 	b.fileIdsMu.RUnlock()
@@ -430,6 +437,8 @@ func (b *GoogleBackend) Delete(ctx context.Context, filename string) error {
 }
 
 func (b *GoogleBackend) CreateFolder(ctx context.Context, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	existingID, err := b.FindFolder(ctx, name)
 	if err == nil && existingID != "" {
 		return existingID, nil
@@ -477,6 +486,8 @@ func (b *GoogleBackend) CreateFolder(ctx context.Context, name string) (string, 
 }
 
 func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	tok, err := b.getValidToken(ctx)
 	if err != nil {
 		return "", err
@@ -520,6 +531,8 @@ func (b *GoogleBackend) FindFolder(ctx context.Context, name string) (string, er
 }
 
 func (b *GoogleBackend) UploadViaGAS(ctx context.Context, gasURL, gasKey, clientID string, data io.Reader) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	reqURL := gasURL + "?key=" + gasKey + "&id=" + clientID
 
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, data)
