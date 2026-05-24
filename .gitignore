@@ -5,5 +5,5 @@ bin/
 *.txt
 *.py
 *.gitignore
-*.git
-*.github
+.git/
+.github/
