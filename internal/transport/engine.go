@@ -164,7 +164,7 @@ func (e *Engine) flushLoop(ctx context.Context) {
 			} else if activeSessions > 0 {
 				sleepDur = 150 * time.Millisecond
 			} else {
-				sleepDur = 1.5 * time.Second
+				sleepDur = 2 * time.Second
 			}
 
 			t.Reset(sleepDur)
@@ -353,7 +353,7 @@ func (e *Engine) pollLoop(ctx context.Context) {
 					} else if activeSessions > 0 {
 						sleepDur = 150 * time.Millisecond
 					} else {
-						sleepDur = 1.5 * time.Second
+						sleepDur = 2 * time.Second
 					}
 
 					t.Reset(sleepDur)
