@@ -317,7 +317,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 		q += " and '" + b.folderID + "' in parents"
 	}
 
-	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&fields=files(id,name)&q=" + url.QueryEscape(q)
+	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&pageSize=40&fields=files(id,name)&q=" + url.QueryEscape(q)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
