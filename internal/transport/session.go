@@ -58,24 +58,42 @@ func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 	s.txCond = sync.NewCond(&s.mu)
 	s.rxCond = sync.NewCond(&s.mu)
 
-	go func() {
+go func() {
 		<-sessionCtx.Done()
 		s.mu.Lock()
 		s.closed = true
 		s.rxCond.Broadcast()
 		s.txCond.Broadcast()
-		
-		for k := range s.rxQueue {
+
+		if s.txBuf != nil {
+			buf := s.txBuf
+			engine.txBufPool.Put(&buf)
+			s.txBuf = nil
+		}
+
+		for k, env := range s.rxQueue {
+			if len(env.Payload) > 0 {
+				fullBuf := env.Payload[:cap(env.Payload)]
+				engine.payloadPool.Put(&fullBuf)
+			}
 			delete(s.rxQueue, k)
 		}
 		engine.rxQueuePool.Put(s.rxQueue)
-		
+
+		for i := range s.rxChunks {
+			if len(s.rxChunks[i]) > 0 {
+				fullBuf := s.rxChunks[i][:cap(s.rxChunks[i])]
+				engine.payloadPool.Put(&fullBuf)
+			}
+			s.rxChunks[i] = nil
+		}
+		s.rxChunks = s.rxChunks[:0]
+
 		chunksPtr := &s.rxChunks
 		engine.rxChunksPool.Put(chunksPtr)
-		
+
 		s.mu.Unlock()
 	}()
-
 	return s
 }
 
