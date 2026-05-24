@@ -238,14 +238,10 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	mw := multipart.NewWriter(pw)
 
 	go func() {
-		var goroutineErr error
+		var gErr error
 		defer func() {
 			mw.Close()
-			if goroutineErr == nil {
-				pw.Close()
-			} else {
-				pw.CloseWithError(goroutineErr)
-			}
+			pw.CloseWithError(gErr)
 		}()
 
 		h := b.headerPool.Get().(textproto.MIMEHeader)
@@ -253,13 +249,12 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		part1, err := mw.CreatePart(h)
 		for k := range h { delete(h, k) }
 		b.headerPool.Put(h)
-
 		if err != nil {
-			goroutineErr = fmt.Errorf("creating metadata part: %w", err)
+			gErr = err
 			return
 		}
 		if _, err := part1.Write(metaBytes); err != nil {
-			goroutineErr = fmt.Errorf("writing metadata part: %w", err)
+			gErr = err
 			return
 		}
 
@@ -268,21 +263,21 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 		part2, err := mw.CreatePart(h2)
 		for k := range h2 { delete(h2, k) }
 		b.headerPool.Put(h2)
-
 		if err != nil {
-			goroutineErr = fmt.Errorf("creating data part: %w", err)
+			gErr = err
 			return
 		}
 		if _, err := io.Copy(part2, data); err != nil {
-			goroutineErr = fmt.Errorf("copying data to multipart: %w", err)
+			gErr = err
 			return
 		}
 	}()
 
+	defer pr.Close()
+
 	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
-		pr.Close()
 		return fmt.Errorf("creating http request: %w", err)
 	}
 	
