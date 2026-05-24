@@ -160,11 +160,11 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 			var sleepDur time.Duration
 			if sentSomething {
-				sleepDur = 50 * time.Millisecond
-			} else if activeSessions > 0 {
 				sleepDur = 100 * time.Millisecond
+			} else if activeSessions > 0 {
+				sleepDur = 150 * time.Millisecond
 			} else {
-				sleepDur = 1 * time.Second
+				sleepDur = 1.5 * time.Second
 			}
 
 			t.Reset(sleepDur)
@@ -324,7 +324,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 func (e *Engine) pollLoop(ctx context.Context) {
 	const numWorkers = 3
-	const staggerInterval = 50 * time.Millisecond
+	const staggerInterval = 100 * time.Millisecond
 
 	for i := 0; i < numWorkers; i++ {
 		go func(workerID int) {
@@ -349,11 +349,11 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 					var sleepDur time.Duration
 					if foundFiles {
-						sleepDur = 40 * time.Millisecond
+						sleepDur = 80 * time.Millisecond
 					} else if activeSessions > 0 {
-						sleepDur = 100 * time.Millisecond
+						sleepDur = 150 * time.Millisecond
 					} else {
-						sleepDur = 1 * time.Second
+						sleepDur = 1.5 * time.Second
 					}
 
 					t.Reset(sleepDur)
