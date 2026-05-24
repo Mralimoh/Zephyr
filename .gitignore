@@ -1,9 +1,0 @@
-bin/
-*.json
-*.exe
-*.token
-*.txt
-*.py
-*.gitignore
-.git/
-.github/
