@@ -160,9 +160,9 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 			var sleepDur time.Duration
 			if sentSomething {
-				sleepDur = 10 * time.Millisecond
-			} else if activeSessions > 0 {
 				sleepDur = 30 * time.Millisecond
+			} else if activeSessions > 0 {
+				sleepDur = 50 * time.Millisecond
 			} else {
 				sleepDur = 1 * time.Second
 			}
@@ -349,11 +349,11 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 					var sleepDur time.Duration
 					if foundFiles {
-						sleepDur = 10 * time.Millisecond
+						sleepDur = 30 * time.Millisecond
 					} else if activeSessions > 0 {
-						sleepDur = 250 * time.Millisecond
+						sleepDur = 100 * time.Millisecond
 					} else {
-						sleepDur = 2 * time.Second
+						sleepDur = 1 * time.Second
 					}
 
 					t.Reset(sleepDur)
