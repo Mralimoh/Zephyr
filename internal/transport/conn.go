@@ -33,6 +33,9 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 	n = copy(b, chunk)
 
 	if n == len(chunk) {
+		fullBuf := chunk[:cap(chunk)]
+		v.engine.payloadPool.Put(&fullBuf)
+
 		v.session.rxChunks[0] = nil 
 		v.session.rxChunks = v.session.rxChunks[1:]
 		

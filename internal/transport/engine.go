@@ -53,6 +53,12 @@ type Engine struct {
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
 	txBufPool      sync.Pool
+	payloadPool    sync.Pool
+	metaPool       sync.Pool
+	encPool        sync.Pool
+	sessionSlicePool sync.Pool
+	rxQueuePool      sync.Pool
+	rxChunksPool     sync.Pool
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string, mode string, gasIDs []string, gasKey string) *Engine {
@@ -94,6 +100,35 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	e.txBufPool.New = func() any {
 		b := make([]byte, 0, FlushThresholdBytes)
 		return &b
+	}
+
+	e.payloadPool.New = func() any {
+		b := make([]byte, MaxPayloadLen)
+		return &b
+	}
+
+	e.metaPool.New = func() any {
+		b := make([]byte, 512)
+		return &b
+	}
+
+	e.encPool.New = func() any {
+		b := make([]byte, 512)
+		return &b
+	}
+
+	e.sessionSlicePool.New = func() any {
+		s := make([]*Session, 0, 64)
+		return &s
+	}
+
+	e.rxQueuePool.New = func() any {
+		return make(map[uint64]*Envelope)
+	}
+
+	e.rxChunksPool.New = func() any {
+		s := make([][]byte, 0, 16)
+		return &s
 	}
 
 	if isClient {
@@ -179,11 +214,18 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 func (e *Engine) flushAll(ctx context.Context) bool {
 	e.sessionMu.Lock()
-	sessions := make([]*Session, 0, len(e.sessions))
+	slicePtr := e.sessionSlicePool.Get().(*[]*Session)
+	sessions := (*slicePtr)[:0] 
+	
 	for _, s := range e.sessions {
 		sessions = append(sessions, s)
 	}
 	e.sessionMu.Unlock()
+
+	defer func() {
+		*slicePtr = sessions 
+		e.sessionSlicePool.Put(slicePtr)
+	}()
 
 	muxes := make(map[string][]Envelope)
 	var closedIDs []string
@@ -272,7 +314,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 					zw.Reset(pw)
 					var encErr error
 					for _, env := range envelopes {
-						if err := env.Encode(zw); err != nil {
+						if err := env.Encode(zw, &e.encPool); err != nil {
 							encErr = err
 							break
 						}
@@ -582,21 +624,26 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		}
 
 		var env Envelope
-		if err := env.Decode(zr); err != nil {
+		if err := env.Decode(zr, &e.payloadPool, &e.metaPool); err != nil {
 			break
 		}
 
 		e.closedSessionsMu.Lock()
 		_, isClosed := e.closedSessions[env.SessionID]
 		e.closedSessionsMu.Unlock()
+		
 		if isClosed {
+			if len(env.Payload) > 0 {
+				fullBuf := env.Payload[:cap(env.Payload)]
+				e.payloadPool.Put(&fullBuf)
+			}
 			continue
 		}
 
 		e.sessionMu.Lock()
 		s, exists := e.sessions[env.SessionID]
 		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
-			s = NewSession(e.ctx, env.SessionID)
+			s = NewSession(e.ctx, env.SessionID, e)
 			s.ClientID = fileClientID
 			e.sessions[env.SessionID] = s
 			e.sessionMu.Unlock()
@@ -607,6 +654,11 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 
 		if s != nil {
 			s.ProcessRx(&env)
+		} else {
+			if len(env.Payload) > 0 {
+				fullBuf := env.Payload[:cap(env.Payload)]
+				e.payloadPool.Put(&fullBuf)
+			}
 		}
 	}
 }

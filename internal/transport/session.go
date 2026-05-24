@@ -40,14 +40,18 @@ type Session struct {
 	rxStallTime time.Time
 }
 
-func NewSession(ctx context.Context, id string) *Session {
+func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 	sessionCtx, cancel := context.WithCancel(ctx)
+	
+	qPtr := engine.rxQueuePool.Get().(map[uint64]*Envelope)
+	cPtr := engine.rxChunksPool.Get().(*[][]byte)
+	
 	s := &Session{
 		ID:           id,
-		rxQueue:      make(map[uint64]*Envelope),
+		rxQueue:      qPtr,
 		lastActivity: time.Now(),
 		txBuf:        make([]byte, 0, FlushThresholdBytes),
-		rxChunks:     make([][]byte, 0, 16),
+		rxChunks:     (*cPtr)[:0],
 		Ctx:          sessionCtx,
 		cancel:       cancel,
 	}
@@ -60,6 +64,15 @@ func NewSession(ctx context.Context, id string) *Session {
 		s.closed = true
 		s.rxCond.Broadcast()
 		s.txCond.Broadcast()
+		
+		for k := range s.rxQueue {
+			delete(s.rxQueue, k)
+		}
+		engine.rxQueuePool.Put(s.rxQueue)
+		
+		chunksPtr := &s.rxChunks
+		engine.rxChunksPool.Put(chunksPtr)
+		
 		s.mu.Unlock()
 	}()
 
@@ -75,9 +88,6 @@ func (s *Session) Close() {
 	}
 
 	s.closed = true
-	s.txBuf = nil
-	s.rxChunks = nil
-	s.rxQueue = nil
 	s.cancel()
 	s.txCond.Broadcast()
 	s.rxCond.Broadcast()

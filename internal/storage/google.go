@@ -49,16 +49,24 @@ type GoogleBackend struct {
 	fileIDsRing []string
 	fileIDsIdx  int
 	fileIdsMu   sync.RWMutex
+
+	headerPool sync.Pool
 }
 
 func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
-	return &GoogleBackend{
+	b := &GoogleBackend{
 		httpClient:  client,
 		saPath:      saPath,
 		folderID:    folderID,
 		fileIDs:     make(map[string]string),
 		fileIDsRing: make([]string, 256),
 	}
+
+	b.headerPool.New = func() any {
+		return make(textproto.MIMEHeader)
+	}
+
+	return b
 }
 
 func (b *GoogleBackend) Login(ctx context.Context) error {
@@ -240,27 +248,31 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 			}
 		}()
 
-		h := make(textproto.MIMEHeader)
+		h := b.headerPool.Get().(textproto.MIMEHeader)
 		h.Set("Content-Type", "application/json; charset=UTF-8")
 		part1, err := mw.CreatePart(h)
+		for k := range h { delete(h, k) }
+		b.headerPool.Put(h)
+
 		if err != nil {
 			goroutineErr = fmt.Errorf("creating metadata part: %w", err)
 			return
 		}
-		
 		if _, err := part1.Write(metaBytes); err != nil {
 			goroutineErr = fmt.Errorf("writing metadata part: %w", err)
 			return
 		}
 
-		h = make(textproto.MIMEHeader)
-		h.Set("Content-Type", "application/octet-stream")
-		part2, err := mw.CreatePart(h)
+		h2 := b.headerPool.Get().(textproto.MIMEHeader)
+		h2.Set("Content-Type", "application/octet-stream")
+		part2, err := mw.CreatePart(h2)
+		for k := range h2 { delete(h2, k) }
+		b.headerPool.Put(h2)
+
 		if err != nil {
 			goroutineErr = fmt.Errorf("creating data part: %w", err)
 			return
 		}
-		
 		if _, err := io.Copy(part2, data); err != nil {
 			goroutineErr = fmt.Errorf("copying data to multipart: %w", err)
 			return
