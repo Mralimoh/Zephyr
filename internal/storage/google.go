@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -344,7 +345,13 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 			Name string `json:"name"`
 		} `json:"files"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := jsonv2.Unmarshal(bodyBytes, &resData); err != nil {
 		return nil, err
 	}
 
