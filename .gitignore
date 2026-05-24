@@ -4,3 +4,6 @@ bin/
 *.token
 *.txt
 *.py
+.gitignore
+.git
+.github
