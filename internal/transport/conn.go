@@ -7,8 +7,9 @@ import (
 )
 
 type VirtualConn struct {
-	session *Session
-	engine  *Engine
+	session  *Session
+	engine   *Engine
+	rxOffset int
 }
 
 func NewVirtualConn(s *Session, e *Engine) *VirtualConn {
@@ -30,20 +31,21 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 	}
 
 	chunk := v.session.rxChunks[0]
-	n = copy(b, chunk)
+	n = copy(b, chunk[v.rxOffset:])
 
-	if n == len(chunk) {
+	if v.rxOffset+n == len(chunk) {
 		fullBuf := chunk[:0]
 		v.engine.payloadPool.Put(&fullBuf)
 
 		v.session.rxChunks[0] = nil
 		v.session.rxChunks = v.session.rxChunks[1:]
+		v.rxOffset = 0 
 
 		if len(v.session.rxChunks) == 0 {
 			v.session.rxChunks = make([][]byte, 0, 16)
 		}
 	} else {
-		v.session.rxChunks[0] = chunk[n:]
+		v.rxOffset += n
 	}
 
 	return n, nil

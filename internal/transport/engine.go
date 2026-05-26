@@ -323,6 +323,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 						}
 					}
 					zw.Close()
+					zw.Reset(nil)
 					e.zstdWriterPool.Put(zw)
 					pw.CloseWithError(encErr)
 				}()
@@ -656,7 +657,12 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		}
 
 		if s != nil {
-			s.ProcessRx(&env)
+			if !s.ProcessRx(&env) {
+				if len(env.Payload) > 0 {
+					fullBuf := env.Payload[:0]
+					e.payloadPool.Put(&fullBuf)
+				}
+			}
 		} else {
 			if len(env.Payload) > 0 {
 				fullBuf := env.Payload[:0]

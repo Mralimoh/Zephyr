@@ -132,13 +132,13 @@ func (s *Session) EnqueueTx(data []byte) error {
 	return nil
 }
 
-func (s *Session) ProcessRx(env *Envelope) {
+func (s *Session) ProcessRx(env *Envelope) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastActivity = time.Now()
 
 	if s.rxClosed || s.closed {
-		return
+		return false
 	}
 
 	if !s.rxStallTime.IsZero() && time.Since(s.rxStallTime) > 25*time.Second {
@@ -147,7 +147,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 		s.cancel()
 		s.rxCond.Broadcast()
 		s.txCond.Broadcast()
-		return
+		return false
 	}
 
 	if env.Seq == s.rxSeq {
@@ -161,13 +161,13 @@ func (s *Session) ProcessRx(env *Envelope) {
 			s.closed = true
 			s.cancel()
 			s.rxCond.Broadcast()
-			return
+			return true
 		}
 
 		for {
 			if nextEnv, ok := s.rxQueue[s.rxSeq]; ok {
 				if s.closed {
-					return
+					return true
 				}
 				if len(nextEnv.Payload) > 0 {
 					s.rxChunks = append(s.rxChunks, nextEnv.Payload)
@@ -180,7 +180,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 					s.closed = true
 					s.cancel()
 					s.rxCond.Broadcast()
-					return
+					return true
 				}
 			} else {
 				break
@@ -190,6 +190,7 @@ func (s *Session) ProcessRx(env *Envelope) {
 		if len(s.rxQueue) == 0 {
 			s.rxStallTime = time.Time{}
 		}
+		return true
 
 	} else if env.Seq > s.rxSeq {
 		if env.Seq-s.rxSeq > 32 {
@@ -198,12 +199,15 @@ func (s *Session) ProcessRx(env *Envelope) {
 			s.cancel()
 			s.rxCond.Broadcast()
 			s.txCond.Broadcast()
-			return
+			return false
 		}
 		s.rxQueue[env.Seq] = env
 
 		if s.rxStallTime.IsZero() {
 			s.rxStallTime = time.Now()
 		}
+		return true
 	}
+
+	return false
 }

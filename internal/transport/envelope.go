@@ -87,11 +87,11 @@ func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) 
 
 	sidLen := int(buf[1])
 	e.SessionID = string(buf[2 : 2+sidLen])
-	
+
 	offset := 2 + sidLen
 	e.Seq = binary.BigEndian.Uint64(buf[offset : offset+8])
 	offset += 8
-	
+
 	addrLen := int(buf[offset])
 	offset++
 	if addrLen > 0 {
@@ -106,10 +106,14 @@ func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) 
 		if payLen > MaxPayloadLen {
 			return fmt.Errorf("packet too large: %d", payLen)
 		}
-		
+
 		bufPtr := payPool.Get().(*[]byte)
 		e.Payload = (*bufPtr)[:payLen]
+		
 		if _, err := io.ReadFull(r, e.Payload); err != nil {
+			fullBuf := e.Payload[:0]
+			payPool.Put(&fullBuf)
+			e.Payload = nil
 			return err
 		}
 	}
