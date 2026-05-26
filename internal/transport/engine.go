@@ -215,15 +215,18 @@ func (e *Engine) flushLoop(ctx context.Context) {
 func (e *Engine) flushAll(ctx context.Context) bool {
 	e.sessionMu.Lock()
 	slicePtr := e.sessionSlicePool.Get().(*[]*Session)
-	sessions := (*slicePtr)[:0] 
-	
+	sessions := (*slicePtr)[:0]
+
 	for _, s := range e.sessions {
 		sessions = append(sessions, s)
 	}
 	e.sessionMu.Unlock()
 
 	defer func() {
-		*slicePtr = sessions 
+		for i := range sessions {
+			sessions[i] = nil
+		}
+		*slicePtr = sessions[:0]
 		e.sessionSlicePool.Put(slicePtr)
 	}()
 
@@ -233,9 +236,9 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 	for _, s := range sessions {
 		s.mu.Lock()
 		isPriority := s.closed || s.TargetAddr != ""
-		shouldSend := isPriority || 
-		              len(s.txBuf) >= FlushThresholdBytes || 
-		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
+		shouldSend := isPriority ||
+			len(s.txBuf) >= FlushThresholdBytes ||
+			(len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
 
 		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
 			s.mu.Unlock()
@@ -254,7 +257,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			Close:      s.closed,
 			TargetAddr: s.TargetAddr,
 		}
-		
+
 		if s.closed {
 			closedIDs = append(closedIDs, s.ID)
 		}
@@ -267,16 +270,16 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 		newBufPtr := e.txBufPool.Get().(*[]byte)
 		s.txBuf = (*newBufPtr)[:0]
-		
+
 		s.txSeq++
-		s.TargetAddr = "" 
-		s.txCond.Signal() 
+		s.TargetAddr = ""
+		s.txCond.Signal()
 		s.mu.Unlock()
 	}
 
 	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
-		
+
 		go func(fname string, envelopes []Envelope, targetCID string) {
 			upCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
 			defer cancel()
@@ -284,7 +287,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			defer func() {
 				for i := range envelopes {
 					if envelopes[i].Payload != nil {
-						buf := envelopes[i].Payload
+						buf := envelopes[i].Payload[:0]
 						e.txBufPool.Put(&buf)
 					}
 				}
@@ -340,7 +343,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				} else {
 					err = e.store.Upload(upCtx, fname, pr)
 				}
-				
+
 				pr.Close()
 
 				if err == nil {
@@ -360,7 +363,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
-	
+
 	return len(muxes) > 0
 }
 
@@ -610,7 +613,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		e.zstdReaderPool.Put(zr)
 		return
 	}
-	
+
 	defer func() {
 		zr.Reset(nil)
 		e.zstdReaderPool.Put(zr)
@@ -631,10 +634,10 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		e.closedSessionsMu.Lock()
 		_, isClosed := e.closedSessions[env.SessionID]
 		e.closedSessionsMu.Unlock()
-		
+
 		if isClosed {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:cap(env.Payload)]
+				fullBuf := env.Payload[:0]
 				e.payloadPool.Put(&fullBuf)
 			}
 			continue
@@ -656,7 +659,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 			s.ProcessRx(&env)
 		} else {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:cap(env.Payload)]
+				fullBuf := env.Payload[:0]
 				e.payloadPool.Put(&fullBuf)
 			}
 		}

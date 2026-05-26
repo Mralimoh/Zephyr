@@ -33,7 +33,7 @@ func (v *VirtualConn) Read(b []byte) (n int, err error) {
 	n = copy(b, chunk)
 
 	if n == len(chunk) {
-		fullBuf := chunk[:cap(chunk)]
+		fullBuf := chunk[:0]
 		v.engine.payloadPool.Put(&fullBuf)
 
 		v.session.rxChunks[0] = nil

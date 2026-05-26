@@ -42,10 +42,10 @@ type Session struct {
 
 func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 	sessionCtx, cancel := context.WithCancel(ctx)
-	
+
 	qPtr := engine.rxQueuePool.Get().(map[uint64]*Envelope)
 	cPtr := engine.rxChunksPool.Get().(*[][]byte)
-	
+
 	s := &Session{
 		ID:           id,
 		rxQueue:      qPtr,
@@ -58,22 +58,22 @@ func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 	s.txCond = sync.NewCond(&s.mu)
 	s.rxCond = sync.NewCond(&s.mu)
 
-go func() {
+	go func() {
 		<-sessionCtx.Done()
 		s.mu.Lock()
 		s.closed = true
 		s.rxCond.Broadcast()
 		s.txCond.Broadcast()
 
-		if s.txBuf != nil {
-			buf := s.txBuf
+		if len(s.txBuf) > 0 {
+			buf := s.txBuf[:0]
 			engine.txBufPool.Put(&buf)
 			s.txBuf = nil
 		}
 
 		for k, env := range s.rxQueue {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:cap(env.Payload)]
+				fullBuf := env.Payload[:0]
 				engine.payloadPool.Put(&fullBuf)
 			}
 			delete(s.rxQueue, k)
@@ -82,15 +82,15 @@ go func() {
 
 		for i := range s.rxChunks {
 			if len(s.rxChunks[i]) > 0 {
-				fullBuf := s.rxChunks[i][:cap(s.rxChunks[i])]
+				fullBuf := s.rxChunks[i][:0]
 				engine.payloadPool.Put(&fullBuf)
 			}
 			s.rxChunks[i] = nil
 		}
-		s.rxChunks = s.rxChunks[:0]
-
-		chunksPtr := &s.rxChunks
-		engine.rxChunksPool.Put(chunksPtr)
+		
+		chunksBuf := s.rxChunks[:0]
+		engine.rxChunksPool.Put(&chunksBuf)
+		s.rxChunks = nil
 
 		s.mu.Unlock()
 	}()
