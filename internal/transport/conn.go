@@ -62,6 +62,40 @@ func (v *VirtualConn) Write(b []byte) (n int, err error) {
 	return len(b), nil
 }
 
+func (v *VirtualConn) WriteTo(w io.Writer) (n int64, err error) {
+	for {
+		v.session.mu.Lock()
+		for len(v.session.rxChunks) == 0 {
+			if v.session.closed || v.session.rxClosed {
+				v.session.mu.Unlock()
+				return n, nil
+			}
+			v.session.rxCond.Wait()
+		}
+
+		chunk := v.session.rxChunks[0]
+		offset := v.rxOffset
+
+		v.session.rxChunks[0] = nil
+		v.session.rxChunks = v.session.rxChunks[1:]
+		if len(v.session.rxChunks) == 0 {
+			v.session.rxChunks = make([][]byte, 0, 16)
+		}
+		
+		v.rxOffset = 0
+		v.session.mu.Unlock()
+
+		wn, wErr := w.Write(chunk[offset:])
+		n += int64(wn)
+
+		v.engine.payloadPool.Put(chunk[:0])
+
+		if wErr != nil {
+			return n, wErr
+		}
+	}
+}
+
 func (v *VirtualConn) Close() error {
 	v.session.mu.Lock()
 	v.session.closed = true
