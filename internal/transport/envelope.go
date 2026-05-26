@@ -107,12 +107,11 @@ func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) 
 			return fmt.Errorf("packet too large: %d", payLen)
 		}
 
-		bufPtr := payPool.Get().(*[]byte)
-		e.Payload = (*bufPtr)[:payLen]
+		payBuf := payPool.Get().([]byte)
+		e.Payload = payBuf[:payLen]
 		
 		if _, err := io.ReadFull(r, e.Payload); err != nil {
-			fullBuf := e.Payload[:0]
-			payPool.Put(&fullBuf)
+			payPool.Put(e.Payload[:0])
 			e.Payload = nil
 			return err
 		}

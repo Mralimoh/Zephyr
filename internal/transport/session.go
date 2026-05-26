@@ -44,14 +44,14 @@ func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	qPtr := engine.rxQueuePool.Get().(map[uint64]*Envelope)
-	cPtr := engine.rxChunksPool.Get().(*[][]byte)
+	chunks := engine.rxChunksPool.Get().([][]byte)
 
 	s := &Session{
 		ID:           id,
 		rxQueue:      qPtr,
 		lastActivity: time.Now(),
 		txBuf:        make([]byte, 0, FlushThresholdBytes),
-		rxChunks:     (*cPtr)[:0],
+		rxChunks:     chunks[:0],
 		Ctx:          sessionCtx,
 		cancel:       cancel,
 	}
@@ -66,15 +66,13 @@ func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 		s.txCond.Broadcast()
 
 		if len(s.txBuf) > 0 {
-			buf := s.txBuf[:0]
-			engine.txBufPool.Put(&buf)
+			engine.txBufPool.Put(s.txBuf[:0])
 			s.txBuf = nil
 		}
 
 		for k, env := range s.rxQueue {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:0]
-				engine.payloadPool.Put(&fullBuf)
+				engine.payloadPool.Put(env.Payload[:0])
 			}
 			delete(s.rxQueue, k)
 		}
@@ -82,14 +80,12 @@ func NewSession(ctx context.Context, id string, engine *Engine) *Session {
 
 		for i := range s.rxChunks {
 			if len(s.rxChunks[i]) > 0 {
-				fullBuf := s.rxChunks[i][:0]
-				engine.payloadPool.Put(&fullBuf)
+				engine.payloadPool.Put(s.rxChunks[i][:0])
 			}
 			s.rxChunks[i] = nil
 		}
 		
-		chunksBuf := s.rxChunks[:0]
-		engine.rxChunksPool.Put(&chunksBuf)
+		engine.rxChunksPool.Put(s.rxChunks[:0])
 		s.rxChunks = nil
 
 		s.mu.Unlock()

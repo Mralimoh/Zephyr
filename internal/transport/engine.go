@@ -77,7 +77,7 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.zstdWriterPool.New = func() any {
-		zw, err := zstd.NewWriter(nil, 
+		zw, err := zstd.NewWriter(nil,
 			zstd.WithEncoderLevel(zstd.SpeedFastest),
 			zstd.WithEncoderConcurrency(1),
 		)
@@ -98,13 +98,11 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.txBufPool.New = func() any {
-		b := make([]byte, 0, FlushThresholdBytes)
-		return &b
+		return make([]byte, 0, FlushThresholdBytes)
 	}
 
 	e.payloadPool.New = func() any {
-		b := make([]byte, MaxPayloadLen)
-		return &b
+		return make([]byte, MaxPayloadLen)
 	}
 
 	e.metaPool.New = func() any {
@@ -127,8 +125,7 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.rxChunksPool.New = func() any {
-		s := make([][]byte, 0, 16)
-		return &s
+		return make([][]byte, 0, 16)
 	}
 
 	if isClient {
@@ -268,8 +265,8 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
-		newBufPtr := e.txBufPool.Get().(*[]byte)
-		s.txBuf = (*newBufPtr)[:0]
+		newBuf := e.txBufPool.Get().([]byte)
+		s.txBuf = newBuf[:0]
 
 		s.txSeq++
 		s.TargetAddr = ""
@@ -287,8 +284,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			defer func() {
 				for i := range envelopes {
 					if envelopes[i].Payload != nil {
-						buf := envelopes[i].Payload[:0]
-						e.txBufPool.Put(&buf)
+						e.txBufPool.Put(envelopes[i].Payload[:0])
 					}
 				}
 			}()
@@ -638,8 +634,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 
 		if isClosed {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:0]
-				e.payloadPool.Put(&fullBuf)
+				e.payloadPool.Put(env.Payload[:0])
 			}
 			continue
 		}
@@ -659,14 +654,12 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		if s != nil {
 			if !s.ProcessRx(&env) {
 				if len(env.Payload) > 0 {
-					fullBuf := env.Payload[:0]
-					e.payloadPool.Put(&fullBuf)
+					e.payloadPool.Put(env.Payload[:0])
 				}
 			}
 		} else {
 			if len(env.Payload) > 0 {
-				fullBuf := env.Payload[:0]
-				e.payloadPool.Put(&fullBuf)
+				e.payloadPool.Put(env.Payload[:0])
 			}
 		}
 	}
