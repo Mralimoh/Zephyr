@@ -49,24 +49,16 @@ type GoogleBackend struct {
 	fileIDsRing []string
 	fileIDsIdx  int
 	fileIdsMu   sync.RWMutex
-
-	headerPool sync.Pool
 }
 
 func NewGoogleBackend(client *http.Client, saPath, folderID string) *GoogleBackend {
-	b := &GoogleBackend{
+	return &GoogleBackend{
 		httpClient:  client,
 		saPath:      saPath,
 		folderID:    folderID,
 		fileIDs:     make(map[string]string),
 		fileIDsRing: make([]string, 256),
 	}
-
-	b.headerPool.New = func() any {
-		return make(textproto.MIMEHeader)
-	}
-
-	return b
 }
 
 func (b *GoogleBackend) Login(ctx context.Context) error {
@@ -238,46 +230,47 @@ func (b *GoogleBackend) Upload(ctx context.Context, filename string, data io.Rea
 	mw := multipart.NewWriter(pw)
 
 	go func() {
-		var gErr error
+		var goroutineErr error
 		defer func() {
 			mw.Close()
-			pw.CloseWithError(gErr)
+			if goroutineErr == nil {
+				pw.Close()
+			} else {
+				pw.CloseWithError(goroutineErr)
+			}
 		}()
 
-		h := b.headerPool.Get().(textproto.MIMEHeader)
+		h := make(textproto.MIMEHeader)
 		h.Set("Content-Type", "application/json; charset=UTF-8")
 		part1, err := mw.CreatePart(h)
-		for k := range h { delete(h, k) }
-		b.headerPool.Put(h)
 		if err != nil {
-			gErr = err
+			goroutineErr = fmt.Errorf("creating metadata part: %w", err)
 			return
 		}
+		
 		if _, err := part1.Write(metaBytes); err != nil {
-			gErr = err
+			goroutineErr = fmt.Errorf("writing metadata part: %w", err)
 			return
 		}
 
-		h2 := b.headerPool.Get().(textproto.MIMEHeader)
-		h2.Set("Content-Type", "application/octet-stream")
-		part2, err := mw.CreatePart(h2)
-		for k := range h2 { delete(h2, k) }
-		b.headerPool.Put(h2)
+		h = make(textproto.MIMEHeader)
+		h.Set("Content-Type", "application/octet-stream")
+		part2, err := mw.CreatePart(h)
 		if err != nil {
-			gErr = err
+			goroutineErr = fmt.Errorf("creating data part: %w", err)
 			return
 		}
+		
 		if _, err := io.Copy(part2, data); err != nil {
-			gErr = err
+			goroutineErr = fmt.Errorf("copying data to multipart: %w", err)
 			return
 		}
 	}()
 
-	defer pr.Close()
-
 	reqURL := "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, pr)
 	if err != nil {
+		pr.Close()
 		return fmt.Errorf("creating http request: %w", err)
 	}
 	
@@ -312,7 +305,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 		q += " and '" + b.folderID + "' in parents"
 	}
 
-	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&pageSize=120&fields=files(id,name)&q=" + url.QueryEscape(q)
+	reqURL := "https://www.googleapis.com/drive/v3/files?spaces=drive&orderBy=createdTime+asc&fields=files(id,name)&q=" + url.QueryEscape(q)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
@@ -342,6 +335,7 @@ func (b *GoogleBackend) ListQuery(ctx context.Context, prefix string) ([]string,
 	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
 		return nil, err
 	}
+
 	b.fileIdsMu.Lock()
 	var names []string
 	for _, f := range resData.Files {

@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"sync"
 )
 
 type Envelope struct {
@@ -22,13 +21,10 @@ const (
 	MaxPayloadLen   = 10 * 1024 * 1024
 )
 
-func (e *Envelope) Encode(w io.Writer, pool *sync.Pool) error {
+func (e *Envelope) Encode(w io.Writer) error {
 	metaSize := 1 + 1 + len(e.SessionID) + 8 + 1 + len(e.TargetAddr) + 1 + 4
 	
-	ptr := pool.Get().(*[]byte)
-	buf := (*ptr)[:2+metaSize]
-	defer pool.Put(ptr)
-
+	buf := make([]byte, 2 + metaSize)
 	binary.BigEndian.PutUint16(buf[0:2], uint16(metaSize))
 	
 	offset := 2
@@ -66,17 +62,14 @@ func (e *Envelope) Encode(w io.Writer, pool *sync.Pool) error {
 	return nil
 }
 
-func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) error {
+func (e *Envelope) Decode(r io.Reader) error {
 	var sizeBuf [2]byte
 	if _, err := io.ReadFull(r, sizeBuf[:]); err != nil {
 		return err
 	}
 	metaSize := int(binary.BigEndian.Uint16(sizeBuf[:]))
 
-	metaPtr := metaPool.Get().(*[]byte)
-	buf := (*metaPtr)[:metaSize]
-	defer metaPool.Put(metaPtr)
-
+	buf := make([]byte, metaSize)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return err
 	}
@@ -87,11 +80,11 @@ func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) 
 
 	sidLen := int(buf[1])
 	e.SessionID = string(buf[2 : 2+sidLen])
-
+	
 	offset := 2 + sidLen
 	e.Seq = binary.BigEndian.Uint64(buf[offset : offset+8])
 	offset += 8
-
+	
 	addrLen := int(buf[offset])
 	offset++
 	if addrLen > 0 {
@@ -106,13 +99,8 @@ func (e *Envelope) Decode(r io.Reader, payPool *sync.Pool, metaPool *sync.Pool) 
 		if payLen > MaxPayloadLen {
 			return fmt.Errorf("packet too large: %d", payLen)
 		}
-
-		payBuf := payPool.Get().([]byte)
-		e.Payload = payBuf[:payLen]
-		
+		e.Payload = make([]byte, payLen)
 		if _, err := io.ReadFull(r, e.Payload); err != nil {
-			payPool.Put(e.Payload[:0])
-			e.Payload = nil
 			return err
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"sync"
 	"syscall"
 
@@ -26,6 +27,7 @@ var copyBufPool = sync.Pool{
 }
 
 func main() {
+	debug.SetGCPercent(300)
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")

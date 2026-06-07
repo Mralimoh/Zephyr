@@ -53,12 +53,6 @@ type Engine struct {
 	zstdWriterPool sync.Pool
 	zstdReaderPool sync.Pool
 	txBufPool      sync.Pool
-	payloadPool    sync.Pool
-	metaPool       sync.Pool
-	encPool        sync.Pool
-	sessionSlicePool sync.Pool
-	rxQueuePool      sync.Pool
-	rxChunksPool     sync.Pool
 }
 
 func NewEngine(store Datastore, isClient bool, clientID string, mode string, gasIDs []string, gasKey string) *Engine {
@@ -77,7 +71,7 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.zstdWriterPool.New = func() any {
-		zw, err := zstd.NewWriter(nil,
+		zw, err := zstd.NewWriter(nil, 
 			zstd.WithEncoderLevel(zstd.SpeedFastest),
 			zstd.WithEncoderConcurrency(1),
 		)
@@ -98,34 +92,8 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 	}
 
 	e.txBufPool.New = func() any {
-		return make([]byte, 0, FlushThresholdBytes)
-	}
-
-	e.payloadPool.New = func() any {
-		return make([]byte, MaxPayloadLen)
-	}
-
-	e.metaPool.New = func() any {
-		b := make([]byte, 512)
+		b := make([]byte, 0, FlushThresholdBytes)
 		return &b
-	}
-
-	e.encPool.New = func() any {
-		b := make([]byte, 512)
-		return &b
-	}
-
-	e.sessionSlicePool.New = func() any {
-		s := make([]*Session, 0, 64)
-		return &s
-	}
-
-	e.rxQueuePool.New = func() any {
-		return make(map[uint64]*Envelope)
-	}
-
-	e.rxChunksPool.New = func() any {
-		return make([][]byte, 0, 16)
 	}
 
 	if isClient {
@@ -192,11 +160,11 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 			var sleepDur time.Duration
 			if sentSomething {
-				sleepDur = 260 * time.Millisecond
+				sleepDur = 10 * time.Millisecond
 			} else if activeSessions > 0 {
-				sleepDur = 500 * time.Millisecond
+				sleepDur = 30 * time.Millisecond
 			} else {
-				sleepDur = 2 * time.Second
+				sleepDur = 1 * time.Second
 			}
 
 			t.Reset(sleepDur)
@@ -211,21 +179,11 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 func (e *Engine) flushAll(ctx context.Context) bool {
 	e.sessionMu.Lock()
-	slicePtr := e.sessionSlicePool.Get().(*[]*Session)
-	sessions := (*slicePtr)[:0]
-
+	sessions := make([]*Session, 0, len(e.sessions))
 	for _, s := range e.sessions {
 		sessions = append(sessions, s)
 	}
 	e.sessionMu.Unlock()
-
-	defer func() {
-		for i := range sessions {
-			sessions[i] = nil
-		}
-		*slicePtr = sessions[:0]
-		e.sessionSlicePool.Put(slicePtr)
-	}()
 
 	muxes := make(map[string][]Envelope)
 	var closedIDs []string
@@ -233,9 +191,9 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 	for _, s := range sessions {
 		s.mu.Lock()
 		isPriority := s.closed || s.TargetAddr != ""
-		shouldSend := isPriority ||
-			len(s.txBuf) >= FlushThresholdBytes ||
-			(len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 150*time.Millisecond)
+		shouldSend := isPriority || 
+		              len(s.txBuf) >= FlushThresholdBytes || 
+		              (len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
 
 		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
 			s.mu.Unlock()
@@ -254,7 +212,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			Close:      s.closed,
 			TargetAddr: s.TargetAddr,
 		}
-
+		
 		if s.closed {
 			closedIDs = append(closedIDs, s.ID)
 		}
@@ -265,18 +223,18 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
-		newBuf := e.txBufPool.Get().([]byte)
-		s.txBuf = newBuf[:0]
-
+		newBufPtr := e.txBufPool.Get().(*[]byte)
+		s.txBuf = (*newBufPtr)[:0]
+		
 		s.txSeq++
-		s.TargetAddr = ""
-		s.txCond.Signal()
+		s.TargetAddr = "" 
+		s.txCond.Signal() 
 		s.mu.Unlock()
 	}
 
 	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
-
+		
 		go func(fname string, envelopes []Envelope, targetCID string) {
 			upCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
 			defer cancel()
@@ -284,7 +242,8 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 			defer func() {
 				for i := range envelopes {
 					if envelopes[i].Payload != nil {
-						e.txBufPool.Put(envelopes[i].Payload[:0])
+						buf := envelopes[i].Payload
+						e.txBufPool.Put(&buf)
 					}
 				}
 			}()
@@ -313,13 +272,12 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 					zw.Reset(pw)
 					var encErr error
 					for _, env := range envelopes {
-						if err := env.Encode(zw, &e.encPool); err != nil {
+						if err := env.Encode(zw); err != nil {
 							encErr = err
 							break
 						}
 					}
 					zw.Close()
-					zw.Reset(nil)
 					e.zstdWriterPool.Put(zw)
 					pw.CloseWithError(encErr)
 				}()
@@ -340,7 +298,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 				} else {
 					err = e.store.Upload(upCtx, fname, pr)
 				}
-
+				
 				pr.Close()
 
 				if err == nil {
@@ -360,13 +318,13 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 	for _, id := range closedIDs {
 		e.RemoveSession(id)
 	}
-
+	
 	return len(muxes) > 0
 }
 
 func (e *Engine) pollLoop(ctx context.Context) {
 	const numWorkers = 3
-	const staggerInterval = 100 * time.Millisecond
+	const staggerInterval = 50 * time.Millisecond
 
 	for i := 0; i < numWorkers; i++ {
 		go func(workerID int) {
@@ -391,9 +349,9 @@ func (e *Engine) pollLoop(ctx context.Context) {
 
 					var sleepDur time.Duration
 					if foundFiles {
-						sleepDur = 80 * time.Millisecond
+						sleepDur = 10 * time.Millisecond
 					} else if activeSessions > 0 {
-						sleepDur = 150 * time.Millisecond
+						sleepDur = 250 * time.Millisecond
 					} else {
 						sleepDur = 2 * time.Second
 					}
@@ -610,7 +568,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		e.zstdReaderPool.Put(zr)
 		return
 	}
-
+	
 	defer func() {
 		zr.Reset(nil)
 		e.zstdReaderPool.Put(zr)
@@ -624,25 +582,21 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		}
 
 		var env Envelope
-		if err := env.Decode(zr, &e.payloadPool, &e.metaPool); err != nil {
+		if err := env.Decode(zr); err != nil {
 			break
 		}
 
 		e.closedSessionsMu.Lock()
 		_, isClosed := e.closedSessions[env.SessionID]
 		e.closedSessionsMu.Unlock()
-
 		if isClosed {
-			if len(env.Payload) > 0 {
-				e.payloadPool.Put(env.Payload[:0])
-			}
 			continue
 		}
 
 		e.sessionMu.Lock()
 		s, exists := e.sessions[env.SessionID]
 		if !exists && e.myDir == DirRes && e.OnNewSession != nil {
-			s = NewSession(e.ctx, env.SessionID, e)
+			s = NewSession(e.ctx, env.SessionID)
 			s.ClientID = fileClientID
 			e.sessions[env.SessionID] = s
 			e.sessionMu.Unlock()
@@ -652,15 +606,7 @@ func (e *Engine) ProcessRawStream(r io.Reader, fileClientID string) {
 		}
 
 		if s != nil {
-			if !s.ProcessRx(&env) {
-				if len(env.Payload) > 0 {
-					e.payloadPool.Put(env.Payload[:0])
-				}
-			}
-		} else {
-			if len(env.Payload) > 0 {
-				e.payloadPool.Put(env.Payload[:0])
-			}
+			s.ProcessRx(&env)
 		}
 	}
 }

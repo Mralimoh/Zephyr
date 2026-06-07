@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,6 +33,7 @@ func generateSessionID() string {
 }
 
 func main() {
+	debug.SetGCPercent(300)
 	var configPath, gcPath string
 	flag.StringVar(&configPath, "c", "config.json", "Path to config file")
 	flag.StringVar(&gcPath, "gc", "credentials.json", "Path to Google Service Account JSON")
@@ -110,7 +112,7 @@ func main() {
 			}
 
 			sessionID := generateSessionID()[:16]
-			session := transport.NewSession(dc, sessionID, engine)
+			session := transport.NewSession(dc, sessionID)
 			session.TargetAddr = targetAddr
 			engine.AddSession(session)
 
