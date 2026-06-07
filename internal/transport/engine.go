@@ -192,9 +192,9 @@ func (e *Engine) flushLoop(ctx context.Context) {
 
 			var sleepDur time.Duration
 			if sentSomething {
-				sleepDur = 100 * time.Millisecond
+				sleepDur = 260 * time.Millisecond
 			} else if activeSessions > 0 {
-				sleepDur = 150 * time.Millisecond
+				sleepDur = 500 * time.Millisecond
 			} else {
 				sleepDur = 2 * time.Second
 			}
@@ -235,7 +235,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		isPriority := s.closed || s.TargetAddr != ""
 		shouldSend := isPriority ||
 			len(s.txBuf) >= FlushThresholdBytes ||
-			(len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 30*time.Millisecond)
+			(len(s.txBuf) > 0 && time.Since(s.txBufAge) >= 150*time.Millisecond)
 
 		if e.mode == "script" && s.txSeq == 0 && len(s.txBuf) == 0 && !s.closed {
 			s.mu.Unlock()
