@@ -13,7 +13,7 @@ const (
 	DirReq Direction = "req"
 	DirRes Direction = "res"
 
-	FlushThresholdBytes = 256 * 1024
+	FlushThresholdBytes = 512 * 1024
 )
 
 type Session struct {
