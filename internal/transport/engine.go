@@ -186,6 +186,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 	e.sessionMu.Unlock()
 
 	muxes := make(map[string][]Envelope)
+	muxBuffers := make(map[string][]*[]byte)
 	var closedIDs []string
 
 	for _, s := range sessions {
@@ -223,8 +224,13 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 		}
 		muxes[cid] = append(muxes[cid], env)
 
+		if s.txBufPtr != nil {
+			muxBuffers[cid] = append(muxBuffers[cid], s.txBufPtr)
+		}
+
 		newBufPtr := e.txBufPool.Get().(*[]byte)
 		s.txBuf = (*newBufPtr)[:0]
+		s.txBufPtr = newBufPtr
 		
 		s.txSeq++
 		s.TargetAddr = "" 
@@ -234,17 +240,15 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 
 	for cid, mux := range muxes {
 		filename := fmt.Sprintf("%s-%s-mux-%d.bin", e.myDir, cid, time.Now().UnixNano())
+		releaseBufs := muxBuffers[cid]
 		
-		go func(fname string, envelopes []Envelope, targetCID string) {
+		go func(fname string, envelopes []Envelope, targetCID string, bufs []*[]byte) {
 			upCtx, cancel := context.WithTimeout(ctx, 70*time.Second)
 			defer cancel()
 
 			defer func() {
-				for i := range envelopes {
-					if envelopes[i].Payload != nil {
-						buf := envelopes[i].Payload
-						e.txBufPool.Put(&buf)
-					}
+				for _, bufPtr := range bufs {
+					e.txBufPool.Put(bufPtr)
 				}
 			}()
 
@@ -312,7 +316,7 @@ func (e *Engine) flushAll(ctx context.Context) bool {
 					}
 				}
 			}
-		}(filename, mux, cid)
+		}(filename, mux, cid, releaseBufs)
 	}
 
 	for _, id := range closedIDs {
@@ -375,8 +379,13 @@ func (e *Engine) executePoll(ctx context.Context) bool {
 	}
 
 	listCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	files, _ := e.store.ListQuery(listCtx, prefix)
+	files, err := e.store.ListQuery(listCtx, prefix)
 	cancel()
+
+	if err != nil {
+		log.Printf("[Poll Error] Failed to list files with prefix '%s': %v", prefix, err)
+		return false
+	}
 
 	if len(files) == 0 {
 		return false
@@ -408,7 +417,7 @@ func (e *Engine) executePoll(ctx context.Context) bool {
 		}
 		return true
 	}
-	
+
 	return false
 }
 

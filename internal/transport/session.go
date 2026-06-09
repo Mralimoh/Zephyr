@@ -20,6 +20,7 @@ type Session struct {
 	ID           string
 	mu           sync.Mutex
 	txBuf        []byte
+	txBufPtr     *[]byte
 	txSeq        uint64
 	rxSeq        uint64
 	rxQueue      map[uint64]*Envelope
