@@ -164,7 +164,7 @@ func (e *Engine) flushLoop(ctx context.Context) {
 			} else if activeSessions > 0 {
 				sleepDur = 150 * time.Millisecond
 			} else {
-				sleepDur = 2 * time.Second
+				sleepDur = 500 * time.Millisecond
 			}
 
 			t.Reset(sleepDur)
