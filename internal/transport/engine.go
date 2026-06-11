@@ -42,6 +42,7 @@ type Engine struct {
 
 	txSem chan struct{}
 	rxSem chan struct{}
+	wakeFlush chan struct{}
 
 	processed     map[string]bool
 	processedRing []string
@@ -68,10 +69,11 @@ func NewEngine(store Datastore, isClient bool, clientID string, mode string, gas
 		processedRing:  make([]string, 256),
 		txSem:          make(chan struct{}, 16),
 		rxSem:          make(chan struct{}, 32),
+		wakeFlush:      make(chan struct{}, 1),
 	}
 
 	e.zstdWriterPool.New = func() any {
-		zw, err := zstd.NewWriter(nil, 
+		zw, err := zstd.NewWriter(nil,
 			zstd.WithEncoderLevel(zstd.SpeedFastest),
 			zstd.WithEncoderConcurrency(1),
 		)
@@ -137,6 +139,11 @@ func (e *Engine) AddSession(s *Session) {
 	defer e.sessionMu.Unlock()
 	e.sessions[s.ID] = s
 	log.Printf("Engine.AddSession: Added session %s (Total now: %d)", s.ID, len(e.sessions))
+
+	select {
+	case e.wakeFlush <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) flushLoop(ctx context.Context) {
@@ -164,12 +171,19 @@ func (e *Engine) flushLoop(ctx context.Context) {
 			} else if activeSessions > 0 {
 				sleepDur = 150 * time.Millisecond
 			} else {
-				sleepDur = 500 * time.Millisecond
+				sleepDur = 2 * time.Second
 			}
 
 			t.Reset(sleepDur)
 			select {
 			case <-t.C:
+			case <-e.wakeFlush:
+				if !t.Stop() {
+					select {
+					case <-t.C:
+					default:
+					}
+				}
 			case <-ctx.Done():
 				return
 			}
