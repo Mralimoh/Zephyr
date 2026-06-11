@@ -10,13 +10,11 @@ import (
 )
 
 type TransportConfig struct {
-	TargetIP string
-
-	SNI string
-
-	HostHeader string
-
-	InsecureSkipVerify bool
+	EnableDomainFronting bool
+	TargetIP             string
+	SNI                  string
+	HostHeader           string
+	InsecureSkipVerify   bool
 }
 
 type hostRewriteTransport struct {
@@ -43,17 +41,25 @@ func NewCustomClient(cfg TransportConfig) *http.Client {
 		KeepAlive: 60 * time.Second,
 	}
 
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if cfg.TargetIP != "" {
+	dialContext := dialer.DialContext
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+
+	if cfg.EnableDomainFronting {
+		if cfg.SNI != "" {
+			tlsConfig.ServerName = cfg.SNI
+		}
+		if cfg.TargetIP != "" {
+			dialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.DialContext(ctx, "tcp", cfg.TargetIP)
 			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-		TLSClientConfig: &tls.Config{
-			ServerName:         cfg.SNI,
-			InsecureSkipVerify: cfg.InsecureSkipVerify,
-		},
+		}
+	}
+
+	transport := &http.Transport{
+		DialContext:           dialContext,
+		TLSClientConfig:       tlsConfig,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   100,
@@ -64,7 +70,8 @@ func NewCustomClient(cfg TransportConfig) *http.Client {
 	}
 
 	var rt http.RoundTripper = transport
-	if cfg.HostHeader != "" {
+	
+	if cfg.EnableDomainFronting && cfg.HostHeader != "" {
 		rt = &hostRewriteTransport{
 			Transport:  transport,
 			HostHeader: cfg.HostHeader,

@@ -60,10 +60,11 @@ func (v *VirtualConn) Write(b []byte) (n int, err error) {
 
 func (v *VirtualConn) Close() error {
 	v.session.mu.Lock()
-	v.session.closed = true
-	v.session.txCond.Broadcast()
-	v.session.rxCond.Broadcast()
-	v.session.cancel()
+	if !v.session.closed {
+		v.session.closed = true
+		v.session.txCond.Broadcast()
+		v.session.rxCond.Broadcast()
+	}
 	v.session.mu.Unlock()
 
 	return nil
